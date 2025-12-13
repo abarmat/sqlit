@@ -10,6 +10,8 @@ A simple terminal UI for SQL Server, PostgreSQL, MySQL, and SQLite, for those wh
 
 ## Features
 
+- **Multi-database support**: SQL Server, PostgreSQL, MySQL, and SQLite
+- **Query history**: Automatically saves queries per connection, searchable and sortable
 - Fast and intuitive keyboard only control
 - Context based help (no need to memorize tons of hot-keys)
 - Browse databases, tables, views, and stored procedures
@@ -21,7 +23,7 @@ A simple terminal UI for SQL Server, PostgreSQL, MySQL, and SQLite, for those wh
 - Responsive terminal UI
 - CLI mode for scripting and AI agents
 - Themes (Tokyo Night, Nord, and more)
-- Auto-detects and installs ODBC drivers
+- Auto-detects and installs ODBC drivers (SQL Server)
 
 
 ## Motivation
@@ -33,7 +35,7 @@ The problem got severely worse when I switched to Linux and had to rely on VS CO
 
 I tried to use some existing TUI's for SQL, but they were not intuitive for me and I missed the immediate ease of use that other TUI's such as Lazygit provides.
 
-sqlit is a lightweight SQL Server TUI that is easy to use and beautiful to look at, just connect and query. It's for you that just wants to run queries toward your database without launching applications that eats your ram and takes time to load up. Sqlit is designed to make it easy and enjoyable to access your data, not painful.
+sqlit is a lightweight database TUI that is easy to use and beautiful to look at, just connect and query. It's for you that just wants to run queries toward your database without launching applications that eats your ram and takes time to load up. Sqlit supports SQL Server, PostgreSQL, MySQL, and SQLite, and is designed to make it easy and enjoyable to access your data, not painful.
 
 
 ## Installation
@@ -42,7 +44,19 @@ sqlit is a lightweight SQL Server TUI that is easy to use and beautiful to look 
 pip install sqlit-tui
 ```
 
-That's it. When you first run sqlit, it will detect if you're missing ODBC drivers and help you install them for your OS (Ubuntu, Fedora, Arch, macOS, etc).
+For SQL Server, sqlit will detect if you're missing ODBC drivers and help you install them.
+
+For PostgreSQL and MySQL, install the optional drivers:
+
+```bash
+# PostgreSQL
+pip install psycopg2-binary
+
+# MySQL
+pip install mysql-connector-python
+```
+
+SQLite works out of the box with no additional dependencies.
 
 ## Usage
 
@@ -76,6 +90,9 @@ sqlit connection delete "MyServer"
 | `Esc` | Back to NORMAL mode |
 | `e` / `q` / `r` | Focus Explorer / Query / Results |
 | `s` | SELECT TOP 100 from table |
+| `h` | Query history |
+| `d` | Clear query |
+| `n` | New query (clear all) |
 | `Ctrl+P` | Command palette |
 | `Ctrl+Q` | Quit |
 | `?` | Help |
