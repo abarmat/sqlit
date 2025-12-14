@@ -16,7 +16,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import DataTable, Static, TextArea, Tree
 
-from .adapters import DatabaseAdapter, get_adapter
+from .adapters import DatabaseAdapter, create_ssh_tunnel, get_adapter
 from .config import (
     ConnectionConfig,
     load_connections,
@@ -197,6 +197,7 @@ class SSMSTUI(App):
         self.current_connection: Any | None = None
         self.current_config: ConnectionConfig | None = None
         self.current_adapter: DatabaseAdapter | None = None
+        self.current_ssh_tunnel: Any | None = None
         self.vim_mode: VimMode = VimMode.NORMAL
         self._expanded_paths: set[str] = set()
         self._schema_cache: dict = {
@@ -1228,27 +1229,55 @@ class SSMSTUI(App):
 
     def connect_to_server(self, config: ConnectionConfig) -> None:
         """Connect to a database."""
+        from dataclasses import replace
+
         # Check for pyodbc only if it's a SQL Server connection
         if config.db_type == "mssql" and not PYODBC_AVAILABLE:
             self.notify("pyodbc not installed. Run: pip install pyodbc", severity="error")
             return
 
         try:
+            # Close any existing SSH tunnel
+            if self.current_ssh_tunnel:
+                try:
+                    self.current_ssh_tunnel.stop()
+                except Exception:
+                    pass
+                self.current_ssh_tunnel = None
+
+            # Create SSH tunnel if enabled
+            tunnel, host, port = create_ssh_tunnel(config)
+            self.current_ssh_tunnel = tunnel
+
+            # If SSH tunnel was created, use the tunnel's local address
+            if tunnel:
+                connect_config = replace(config, server=host, port=str(port))
+            else:
+                connect_config = config
+
             adapter = get_adapter(config.db_type)
-            self.current_connection = adapter.connect(config)
-            self.current_config = config
+            self.current_connection = adapter.connect(connect_config)
+            self.current_config = config  # Store original config (not tunneled)
             self.current_adapter = adapter
             self._set_connection_health(config.name, True)
 
             status = self.query_one("#status-bar", Static)
             display_info = config.get_display_info()
-            status.update(f"[#90EE90]Connected to {config.name}[/] ({display_info})")
+            ssh_indicator = " [SSH]" if tunnel else ""
+            status.update(f"[#90EE90]Connected to {config.name}[/] ({display_info}){ssh_indicator}")
 
             self.refresh_tree()
             self._load_schema_cache()
             self.notify(f"Connected to {config.name}")
 
         except Exception as e:
+            # Clean up SSH tunnel on failure
+            if self.current_ssh_tunnel:
+                try:
+                    self.current_ssh_tunnel.stop()
+                except Exception:
+                    pass
+                self.current_ssh_tunnel = None
             self._set_connection_health(config.name, False)
             self.refresh_tree()
             self.notify(f"Connection failed: {e}", severity="error")
@@ -1335,6 +1364,14 @@ class SSMSTUI(App):
             self.current_connection = None
             self.current_config = None
             self.current_adapter = None
+
+        # Close SSH tunnel if active
+        if self.current_ssh_tunnel:
+            try:
+                self.current_ssh_tunnel.stop()
+            except Exception:
+                pass
+            self.current_ssh_tunnel = None
 
     def action_disconnect(self) -> None:
         """Disconnect from current database."""

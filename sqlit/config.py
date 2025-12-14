@@ -70,6 +70,14 @@ class ConnectionConfig:
     trusted_connection: bool = False  # Legacy field for backwards compatibility
     # SQLite specific fields
     file_path: str = ""
+    # SSH tunnel fields
+    ssh_enabled: bool = False
+    ssh_host: str = ""
+    ssh_port: str = "22"
+    ssh_username: str = ""
+    ssh_auth_type: str = "key"  # "key" or "password"
+    ssh_password: str = ""
+    ssh_key_path: str = ""
 
     def __post_init__(self):
         """Handle backwards compatibility with old configs."""

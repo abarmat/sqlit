@@ -54,6 +54,14 @@ def main() -> int:
     )
     # SQLite options
     create_parser.add_argument("--file-path", help="Database file path (SQLite only)")
+    # SSH tunnel options
+    create_parser.add_argument("--ssh-enabled", action="store_true", help="Enable SSH tunnel")
+    create_parser.add_argument("--ssh-host", help="SSH server hostname")
+    create_parser.add_argument("--ssh-port", default="22", help="SSH server port (default: 22)")
+    create_parser.add_argument("--ssh-username", help="SSH username")
+    create_parser.add_argument("--ssh-auth-type", default="key", choices=["key", "password"], help="SSH auth type")
+    create_parser.add_argument("--ssh-key-path", help="SSH private key path")
+    create_parser.add_argument("--ssh-password", help="SSH password")
 
     # connection edit
     edit_parser = conn_subparsers.add_parser("edit", help="Edit an existing connection")

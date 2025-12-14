@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .adapters import get_adapter
+from .adapters import create_ssh_tunnel, get_adapter
 from .config import (
     AUTH_TYPE_LABELS,
     AuthType,
@@ -97,6 +97,13 @@ def cmd_connection_create(args) -> int:
             database=args.database or "",
             username=args.username or "",
             password=args.password or "",
+            ssh_enabled=getattr(args, "ssh_enabled", False) or False,
+            ssh_host=getattr(args, "ssh_host", "") or "",
+            ssh_port=getattr(args, "ssh_port", "22") or "22",
+            ssh_username=getattr(args, "ssh_username", "") or "",
+            ssh_auth_type=getattr(args, "ssh_auth_type", "key") or "key",
+            ssh_key_path=getattr(args, "ssh_key_path", "") or "",
+            ssh_password=getattr(args, "ssh_password", "") or "",
         )
     else:
         # SQL Server connection (mssql)
@@ -122,6 +129,13 @@ def cmd_connection_create(args) -> int:
             password=args.password or "",
             auth_type=auth_type.value,
             trusted_connection=(auth_type == AuthType.WINDOWS),
+            ssh_enabled=getattr(args, "ssh_enabled", False) or False,
+            ssh_host=getattr(args, "ssh_host", "") or "",
+            ssh_port=getattr(args, "ssh_port", "22") or "22",
+            ssh_username=getattr(args, "ssh_username", "") or "",
+            ssh_auth_type=getattr(args, "ssh_auth_type", "key") or "key",
+            ssh_key_path=getattr(args, "ssh_key_path", "") or "",
+            ssh_password=getattr(args, "ssh_password", "") or "",
         )
 
     connections.append(config)
@@ -237,9 +251,19 @@ def cmd_query(args) -> int:
         print("Error: Either --query or --file must be provided.")
         return 1
 
+    tunnel = None
     try:
+        from dataclasses import replace
+
+        # Create SSH tunnel if enabled
+        tunnel, host, port = create_ssh_tunnel(config)
+        if tunnel:
+            connect_config = replace(config, server=host, port=str(port))
+        else:
+            connect_config = config
+
         adapter = get_adapter(config.db_type)
-        db_conn = adapter.connect(config)
+        db_conn = adapter.connect(connect_config)
 
         # Detect query type to avoid executing non-SELECT statements twice
         query_type = query.strip().upper().split()[0] if query.strip() else ""
@@ -294,11 +318,17 @@ def cmd_query(args) -> int:
             print(f"Query executed successfully. Rows affected: {affected}")
 
         db_conn.close()
+        if tunnel:
+            tunnel.stop()
         return 0
 
     except ImportError as e:
         print(f"Error: Required module not installed: {e}")
+        if tunnel:
+            tunnel.stop()
         return 1
     except Exception as e:
         print(f"Error: {e}")
+        if tunnel:
+            tunnel.stop()
         return 1

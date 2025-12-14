@@ -90,10 +90,14 @@ def get_credential_fields() -> list[FieldDefinition]:
             label="Username",
             placeholder="username",
             required=True,
+            row_group="credentials",
+            width="flex",
         ),
         FieldDefinition(
             name="password",
             label="Password",
             field_type=FieldType.PASSWORD,
+            row_group="credentials",
+            width="flex",
         ),
     ]
