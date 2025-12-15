@@ -49,7 +49,7 @@ sqlit is a lightweight database TUI that is easy to use and beautiful to look at
 pip install sqlit-tui
 ```
 
-If you are missing Python packages for your database provider, sqlit will help you install them when you attempt to connect.
+If you are missing Python packages for your database provider, sqlit will help you install them when you attempt to connect. If you want to pre-install requirements, see [Adapter Requirements](#adapter-requirements).
 
 ## Usage
 
@@ -134,6 +134,24 @@ sqlit is built with [Textual](https://github.com/Textualize/textual) and inspire
 ## Contributing
 
 See `CONTRIBUTING.md` for development setup, testing, CI, and CockroachDB quickstart steps.
+
+## Adapter Requirements
+
+Each database provider requires specific Python packages. sqlit will prompt you to install these when needed, but you can also pre-install them:
+
+| Database | Package | Install Command |
+|----------|---------|-----------------|
+| SQLite | *(built-in)* | No installation needed |
+| SQL Server | `pyodbc` | `pip install pyodbc` |
+| PostgreSQL | `psycopg2-binary` | `pip install psycopg2-binary` |
+| MySQL | `mysql-connector-python` | `pip install mysql-connector-python` |
+| MariaDB | `mariadb` | `pip install mariadb` |
+| Oracle | `oracledb` | `pip install oracledb` |
+| DuckDB | `duckdb` | `pip install duckdb` |
+| CockroachDB | `psycopg2-binary` | `pip install psycopg2-binary` |
+| Turso | `libsql-client` | `pip install libsql-client` |
+
+**Note:** SQL Server also requires the ODBC driver. On first connection attempt, sqlit will detect if it's missing and help you install it.
 
 ## License
 
