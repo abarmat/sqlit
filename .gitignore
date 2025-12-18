@@ -32,6 +32,10 @@ docker-compose.yml
 init.sql
 *.tape
 .tmp/
+demos/drafts/
+
+# Database files
+*.db
 
 # AUR build artifacts
 aur/*.tar.gz
