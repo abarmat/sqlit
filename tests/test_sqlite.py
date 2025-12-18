@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from .test_database_base import BaseDatabaseTestsWithLimit, DatabaseTestConfig
 
 
@@ -20,8 +16,8 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
             connection_fixture="sqlite_connection",
             db_fixture="sqlite_db",
             create_connection_args=lambda db: [
-                "--db-type", "sqlite",
-                "--file-path", str(db),
+                "--file-path",
+                str(db),
             ],
         )
 
@@ -32,10 +28,13 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
         try:
             # Create connection
             result = cli_runner(
-                "connection", "create",
-                "--name", connection_name,
-                "--db-type", "sqlite",
-                "--file-path", str(sqlite_db),
+                "connections",
+                "add",
+                "sqlite",
+                "--name",
+                connection_name,
+                "--file-path",
+                str(sqlite_db),
             )
             assert result.returncode == 0
             assert "created successfully" in result.stdout
@@ -54,8 +53,10 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
         # This test verifies that complex queries work
         result = cli_runner(
             "query",
-            "-c", sqlite_connection,
-            "-q", """
+            "-c",
+            sqlite_connection,
+            "-q",
+            """
                 SELECT u.name, p.name as product, p.price
                 FROM test_users u
                 CROSS JOIN test_products p
@@ -70,16 +71,20 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
         """Test UPDATE statement on SQLite."""
         result = cli_runner(
             "query",
-            "-c", sqlite_connection,
-            "-q", "UPDATE test_products SET stock = 200 WHERE id = 1",
+            "-c",
+            sqlite_connection,
+            "-q",
+            "UPDATE test_products SET stock = 200 WHERE id = 1",
         )
         assert result.returncode == 0
 
         # Verify the update
         result = cli_runner(
             "query",
-            "-c", sqlite_connection,
-            "-q", "SELECT stock FROM test_products WHERE id = 1",
+            "-c",
+            sqlite_connection,
+            "-q",
+            "SELECT stock FROM test_products WHERE id = 1",
         )
         assert "200" in result.stdout
 
@@ -89,10 +94,13 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
 
         # Create connection first
         cli_runner(
-            "connection", "create",
-            "--name", connection_name,
-            "--db-type", "sqlite",
-            "--file-path", str(sqlite_db),
+            "connections",
+            "add",
+            "sqlite",
+            "--name",
+            connection_name,
+            "--file-path",
+            str(sqlite_db),
         )
 
         # Delete it
@@ -108,8 +116,10 @@ class TestSQLiteIntegration(BaseDatabaseTestsWithLimit):
         """Test handling of invalid SQL query."""
         result = cli_runner(
             "query",
-            "-c", sqlite_connection,
-            "-q", "SELECT * FROM nonexistent_table",
+            "-c",
+            sqlite_connection,
+            "-q",
+            "SELECT * FROM nonexistent_table",
             check=False,
         )
         assert result.returncode != 0

@@ -16,8 +16,8 @@ Usage:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -41,6 +41,7 @@ class ActionKeyDef:
     key: str  # The key to press
     action: str  # The action name
     context: str | None = None  # Optional context hint (for documentation)
+    guard: str | None = None  # Guard name (resolved at runtime)
 
 
 class KeymapProvider(ABC):
@@ -85,13 +86,9 @@ class DefaultKeymapProvider(KeymapProvider):
             LeaderCommandDef("f", "toggle_fullscreen", "Toggle Maximize", "View"),
             # Connection
             LeaderCommandDef("c", "show_connection_picker", "Connect", "Connection"),
-            LeaderCommandDef(
-                "x", "disconnect", "Disconnect", "Connection", guard="has_connection"
-            ),
+            LeaderCommandDef("x", "disconnect", "Disconnect", "Connection", guard="has_connection"),
             # Actions
-            LeaderCommandDef(
-                "z", "cancel_operation", "Cancel", "Actions", guard="query_executing"
-            ),
+            LeaderCommandDef("z", "cancel_operation", "Cancel", "Actions", guard="query_executing"),
             LeaderCommandDef("t", "change_theme", "Change Theme", "Actions"),
             LeaderCommandDef("h", "show_help", "Help", "Actions"),
             LeaderCommandDef("q", "quit", "Quit", "Actions"),
@@ -126,13 +123,14 @@ class DefaultKeymapProvider(KeymapProvider):
             ActionKeyDef("d", "clear_query", "query_normal"),
             ActionKeyDef("n", "new_query", "query_normal"),
             ActionKeyDef("h", "show_history", "query_normal"),
+            ActionKeyDef("y", "copy_context", "query_normal"),
             # Results
             ActionKeyDef("v", "view_cell", "results"),
-            ActionKeyDef("y", "copy_cell", "results"),
+            ActionKeyDef("y", "copy_context", "results"),
             ActionKeyDef("Y", "copy_row", "results"),
             ActionKeyDef("a", "copy_results", "results"),
-            # Cancel
-            ActionKeyDef("ctrl+c", "cancel_operation", "global"),
+            # Cancel (only when query executing)
+            ActionKeyDef("ctrl+z", "cancel_operation", "global", guard="query_executing"),
         ]
 
 

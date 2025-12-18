@@ -3,10 +3,40 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from textual.widget import Widget
+
+
+def flash_widget(
+    widget: Widget,
+    css_class: str = "flash",
+    duration: float = 0.15,
+    on_complete: Callable[[], None] | None = None,
+) -> None:
+    """Flash a widget by temporarily adding a CSS class.
+
+    Args:
+        widget: The widget to flash.
+        css_class: The CSS class to add (default: "flash").
+        duration: How long to show the flash in seconds (default: 0.15).
+        on_complete: Optional callback to run after flash completes.
+    """
+    widget.add_class(css_class)
+
+    def cleanup() -> None:
+        widget.remove_class(css_class)
+        if on_complete:
+            on_complete()
+
+    widget.set_timer(duration, cleanup)
 
 
 class VimMode(Enum):
@@ -33,8 +63,8 @@ class ContextFooter(Horizontal):
     ContextFooter {
         height: 1;
         dock: bottom;
-        background: $surface;
-        color: $primary;
+        background: $footer-background;
+        color: $footer-key-foreground;
         padding: 0 1;
     }
 
@@ -50,7 +80,7 @@ class ContextFooter(Horizontal):
     }
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._left_bindings: list[KeyBinding] = []
         self._right_bindings: list[KeyBinding] = []
@@ -67,6 +97,7 @@ class ContextFooter(Horizontal):
 
     def _rebuild(self) -> None:
         """Rebuild the footer content with left and right sections."""
+
         def format_binding(binding: KeyBinding) -> str:
             if binding.disabled:
                 return f"[$text-muted strike]{binding.label}: {binding.key}[/]"
@@ -87,8 +118,9 @@ class Dialog(Container):
 
     DEFAULT_CSS = """
     Dialog {
-        border: solid $primary;
+        border: round $primary;
         background: $surface;
+        color: $primary;
         padding: 1;
         height: auto;
         max-height: 85%;
@@ -97,7 +129,7 @@ class Dialog(Container):
         scrollbar-visibility: hidden;
 
         border-title-align: left;
-        border-title-color: $text-muted;
+        border-title-color: $primary;
         border-title-background: $surface;
         border-title-style: bold;
 
@@ -112,8 +144,8 @@ class Dialog(Container):
         self,
         title: str | None = None,
         shortcuts: list[tuple[str, str]] | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Initialize the dialog.
 
         Args:
@@ -125,10 +157,78 @@ class Dialog(Container):
         if title is not None:
             self.border_title = title
         if shortcuts:
-            subtitle = "  ".join(
-                f"{action}: [bold]{key}[/]" for action, key in shortcuts
+            # Use a visible separator. Border subtitles can collapse regular spaces,
+            # so we use non-breaking spaces to preserve padding around the separator.
+            def format_key(key: str) -> str:
+                # Wrap key in <> if not already wrapped
+                if key.startswith("<") and key.endswith(">"):
+                    return key
+                return f"<{key}>"
+
+            subtitle = "\u00a0·\u00a0".join(
+                f"{action}: [bold]{format_key(key)}[/]" for action, key in shortcuts
             )
             self.border_subtitle = subtitle
+
+
+class TreeFilterInput(Static):
+    """Filter input widget for the explorer tree."""
+
+    DEFAULT_CSS = """
+    TreeFilterInput {
+        width: 100%;
+        height: 1;
+        background: $surface;
+        display: none;
+        padding: 0 1;
+    }
+
+    TreeFilterInput.visible {
+        display: block;
+    }
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__("", *args, **kwargs)
+        self.filter_text: str = ""
+        self.match_count: int = 0
+        self.total_count: int = 0
+
+    def set_filter(self, text: str, match_count: int = 0, total_count: int = 0) -> None:
+        """Set the filter text and match count."""
+        self.filter_text = text
+        self.match_count = match_count
+        self.total_count = total_count
+        self._rebuild()
+
+    def clear(self) -> None:
+        """Clear the filter."""
+        self.filter_text = ""
+        self.match_count = 0
+        self.total_count = 0
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """Rebuild the display."""
+        if not self.filter_text:
+            self.update("[dim]/[/] ")
+        else:
+            count_text = f"[dim]{self.match_count}/{self.total_count}[/]"
+            self.update(f"[dim]/[/] {self.filter_text} {count_text}")
+
+    def show(self) -> None:
+        """Show the filter input."""
+        self.add_class("visible")
+        self._rebuild()
+
+    def hide(self) -> None:
+        """Hide the filter input."""
+        self.remove_class("visible")
+
+    @property
+    def is_visible(self) -> bool:
+        """Check if filter is visible."""
+        return "visible" in self.classes
 
 
 class AutocompleteDropdown(Static):
@@ -143,7 +243,7 @@ class AutocompleteDropdown(Static):
         height: auto;
         max-height: 10;
         background: $surface;
-        border: solid $primary;
+        border: round $border;
         padding: 0;
         display: none;
     }
@@ -162,7 +262,7 @@ class AutocompleteDropdown(Static):
     }
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__("", *args, **kwargs)
         self.items: list[str] = []
         self.filtered_items: list[str] = []
@@ -175,9 +275,7 @@ class AutocompleteDropdown(Static):
         self.filter_text = filter_text.lower()
 
         if self.filter_text:
-            self.filtered_items = [
-                item for item in items if item.lower().startswith(self.filter_text)
-            ]
+            self.filtered_items = [item for item in items if item.lower().startswith(self.filter_text)]
         else:
             self.filtered_items = items[:20]
 

@@ -20,9 +20,7 @@ class TestLeaderMenu:
             app._show_leader_menu()
             await pilot.pause()
 
-            has_leader_menu = any(
-                isinstance(screen, LeaderMenuScreen) for screen in app.screen_stack
-            )
+            has_leader_menu = any(isinstance(screen, LeaderMenuScreen) for screen in app.screen_stack)
             assert not has_leader_menu
 
 
@@ -91,6 +89,9 @@ class TestFullscreen:
         app = SSMSTUI()
 
         async with app.run_test(size=(100, 35)) as pilot:
+            # Wait for Lazy widget to render the results table
+            await pilot.pause()
+
             app.action_focus_results()
             await pilot.pause()
 

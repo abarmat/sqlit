@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from rich.markup import escape
 
 if TYPE_CHECKING:
     from ...config import ConnectionConfig
@@ -40,6 +44,7 @@ class ColumnInfo:
 
     name: str
     data_type: str
+    is_primary_key: bool = False
 
 
 # Type alias for table/view info: (schema, name)
@@ -52,6 +57,53 @@ class DatabaseAdapter(ABC):
     Adapters handle database connectivity and introspection.
     Connection schema/metadata is defined separately in db.schema.
     """
+
+    @property
+    def install_hint(self) -> str | None:
+        """Installation hint for the adapter's dependencies."""
+        if not self.install_extra or not self.install_package:
+            return None
+        return _create_driver_import_error_hint(self.name, self.install_extra, self.install_package).strip()
+
+    @property
+    def driver_import_names(self) -> tuple[str, ...]:
+        """Import names used to verify required driver dependencies are installed."""
+        return ()
+
+    def ensure_driver_available(self) -> None:
+        """Verify required dependencies can be imported, raising MissingDriverError if not."""
+        forced_missing = os.environ.get("SQLIT_MOCK_MISSING_DRIVERS", "").strip()
+        if forced_missing:
+            forced = {s.strip() for s in forced_missing.split(",") if s.strip()}
+            db_type = getattr(self, "_db_type", None)
+            if db_type in forced:
+                from ...db.exceptions import MissingDriverError
+
+                if not self.install_extra or not self.install_package:
+                    raise ImportError(f"Missing driver for {self.name}")
+                raise MissingDriverError(self.name, self.install_extra, self.install_package)
+
+        if not self.driver_import_names:
+            return
+        try:
+            for module_name in self.driver_import_names:
+                importlib.import_module(module_name)
+        except ImportError as e:
+            from ...db.exceptions import MissingDriverError
+
+            if not self.install_extra or not self.install_package:
+                raise e
+            raise MissingDriverError(self.name, self.install_extra, self.install_package) from e
+
+    @property
+    def install_extra(self) -> str | None:
+        """Name of the [extra] for pip install."""
+        return None
+
+    @property
+    def install_package(self) -> str | None:
+        """Name of the package for pipx inject."""
+        return None
 
     @property
     @abstractmethod
@@ -94,7 +146,7 @@ class DatabaseAdapter(ABC):
         return f"{schema}.{name}"
 
     @abstractmethod
-    def connect(self, config: "ConnectionConfig") -> Any:
+    def connect(self, config: ConnectionConfig) -> Any:
         """Create a connection to the database."""
         pass
 
@@ -146,9 +198,7 @@ class DatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def build_select_query(
-        self, table: str, limit: int, database: str | None = None, schema: str | None = None
-    ) -> str:
+    def build_select_query(self, table: str, limit: int, database: str | None = None, schema: str | None = None) -> str:
         """Build a SELECT query with limit.
 
         Args:
@@ -160,9 +210,7 @@ class DatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def execute_query(
-        self, conn: Any, query: str, max_rows: int | None = None
-    ) -> tuple[list[str], list[tuple], bool]:
+    def execute_query(self, conn: Any, query: str, max_rows: int | None = None) -> tuple[list[str], list[tuple], bool]:
         """Execute a query and return (columns, rows, truncated).
 
         Args:
@@ -188,9 +236,7 @@ class CursorBasedAdapter(DatabaseAdapter):
     Provides common implementations for execute_query and execute_non_query.
     """
 
-    def execute_query(
-        self, conn: Any, query: str, max_rows: int | None = None
-    ) -> tuple[list[str], list[tuple], bool]:
+    def execute_query(self, conn: Any, query: str, max_rows: int | None = None) -> tuple[list[str], list[tuple], bool]:
         """Execute a query using cursor-based approach with optional row limit."""
         cursor = conn.cursor()
         cursor.execute(query)
@@ -212,7 +258,7 @@ class CursorBasedAdapter(DatabaseAdapter):
         """Execute a non-query using cursor-based approach."""
         cursor = conn.cursor()
         cursor.execute(query)
-        rowcount = cursor.rowcount
+        rowcount = int(cursor.rowcount)
         conn.commit()
         return rowcount
 
@@ -259,14 +305,12 @@ class MySQLBaseAdapter(CursorBasedAdapter):
         cursor = conn.cursor()
         if database:
             cursor.execute(
-                "SELECT table_name FROM information_schema.views "
-                "WHERE table_schema = %s ORDER BY table_name",
+                "SELECT table_name FROM information_schema.views " "WHERE table_schema = %s ORDER BY table_name",
                 (database,),
             )
         else:
             cursor.execute(
-                "SELECT table_name FROM information_schema.views "
-                "WHERE table_schema = DATABASE() ORDER BY table_name"
+                "SELECT table_name FROM information_schema.views " "WHERE table_schema = DATABASE() ORDER BY table_name"
             )
         return [("", row[0]) for row in cursor.fetchall()]
 
@@ -275,6 +319,23 @@ class MySQLBaseAdapter(CursorBasedAdapter):
     ) -> list[ColumnInfo]:
         """Get columns for a table. Schema parameter is ignored (MySQL has no schemas)."""
         cursor = conn.cursor()
+
+        # Get primary key columns
+        if database:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.key_column_usage "
+                "WHERE table_schema = %s AND table_name = %s AND constraint_name = 'PRIMARY'",
+                (database, table),
+            )
+        else:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.key_column_usage "
+                "WHERE table_schema = DATABASE() AND table_name = %s AND constraint_name = 'PRIMARY'",
+                (table,),
+            )
+        pk_columns = {row[0] for row in cursor.fetchall()}
+
+        # Get all columns
         if database:
             cursor.execute(
                 "SELECT column_name, data_type FROM information_schema.columns "
@@ -289,7 +350,7 @@ class MySQLBaseAdapter(CursorBasedAdapter):
                 "ORDER BY ordinal_position",
                 (table,),
             )
-        return [ColumnInfo(name=row[0], data_type=row[1]) for row in cursor.fetchall()]
+        return [ColumnInfo(name=row[0], data_type=row[1], is_primary_key=row[0] in pk_columns) for row in cursor.fetchall()]
 
     def get_procedures(self, conn: Any, database: str | None = None) -> list[str]:
         """Get stored procedures."""
@@ -317,9 +378,7 @@ class MySQLBaseAdapter(CursorBasedAdapter):
         escaped = name.replace("`", "``")
         return f"`{escaped}`"
 
-    def build_select_query(
-        self, table: str, limit: int, database: str | None = None, schema: str | None = None
-    ) -> str:
+    def build_select_query(self, table: str, limit: int, database: str | None = None, schema: str | None = None) -> str:
         """Build SELECT LIMIT query. Schema parameter is ignored (MySQL has no schemas)."""
         if database:
             return f"SELECT * FROM `{database}`.`{table}` LIMIT {limit}"
@@ -371,13 +430,31 @@ class PostgresBaseAdapter(CursorBasedAdapter):
         """Get columns for a table."""
         cursor = conn.cursor()
         schema = schema or "public"
+
+        # Get primary key columns
+        cursor.execute(
+            "SELECT kcu.column_name "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "  ON tc.constraint_name = kcu.constraint_name "
+            "  AND tc.table_schema = kcu.table_schema "
+            "WHERE tc.constraint_type = 'PRIMARY KEY' "
+            "AND tc.table_schema = %s AND tc.table_name = %s",
+            (schema, table),
+        )
+        pk_columns = {row[0] for row in cursor.fetchall()}
+
+        # Get all columns
         cursor.execute(
             "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_schema = %s AND table_name = %s "
             "ORDER BY ordinal_position",
             (schema, table),
         )
-        return [ColumnInfo(name=row[0], data_type=row[1]) for row in cursor.fetchall()]
+        return [
+            ColumnInfo(name=row[0], data_type=row[1], is_primary_key=row[0] in pk_columns)
+            for row in cursor.fetchall()
+        ]
 
     def quote_identifier(self, name: str) -> str:
         """Quote identifier using double quotes for PostgreSQL.
@@ -387,9 +464,20 @@ class PostgresBaseAdapter(CursorBasedAdapter):
         escaped = name.replace('"', '""')
         return f'"{escaped}"'
 
-    def build_select_query(
-        self, table: str, limit: int, database: str | None = None, schema: str | None = None
-    ) -> str:
+    def build_select_query(self, table: str, limit: int, database: str | None = None, schema: str | None = None) -> str:
         """Build SELECT LIMIT query for PostgreSQL."""
         schema = schema or "public"
         return f'SELECT * FROM "{schema}"."{table}" LIMIT {limit}'
+
+
+def _create_driver_import_error_hint(driver_name: str, extra_name: str, package_name: str) -> str:
+    """Generate a context-aware hint for missing driver installation."""
+    from ...install_strategy import detect_strategy
+
+    strategy = detect_strategy(extra_name=extra_name, package_name=package_name)
+    instructions = escape(strategy.manual_instructions)
+    return (
+        f"{driver_name} driver not found.\n\n"
+        f"To connect to {driver_name}, run:\n\n"
+        f"[bold]{instructions}[/bold]\n"
+    )

@@ -2,43 +2,24 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from textual.timer import Timer
 from textual.widgets import TextArea
 from textual.worker import Worker
 
-if TYPE_CHECKING:
-    from ...config import ConnectionConfig
-    from ...widgets import VimMode
+from ..protocols import AppProtocol
 
-# Spinner frames for loading animation
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 
 class AutocompleteMixin:
     """Mixin providing SQL autocomplete functionality."""
 
-    # These attributes are defined in the main app class
-    current_connection: Any
-    current_config: "ConnectionConfig | None"
-    current_adapter: Any
-    vim_mode: "VimMode"
-    _schema_cache: dict
-    _autocomplete_visible: bool
-    _autocomplete_items: list[str]
-    _autocomplete_index: int
-    _autocomplete_filter: str
-    _autocomplete_just_applied: bool
-    # Schema indexing state
-    _schema_indexing: bool
-    _schema_worker: Worker | None
-    _schema_spinner_index: int
-    _schema_spinner_timer: Timer | None
-    # Table metadata for lazy column loading: {display_name.lower(): (schema, table, database)}
-    _table_metadata: dict[str, tuple[str, str, str | None]]
-    # Track in-flight column loading requests
-    _columns_loading: set[str]
+    _schema_worker: Worker[Any] | None = None
+    _schema_spinner_timer: Timer | None = None
+    _schema_cache: dict[str, Any] = {}
+    _table_metadata: dict[str, tuple[str, str, str | None]] = {}
 
     def _get_word_before_cursor(self, text: str, cursor_pos: int) -> tuple[str, str]:
         """Get the current word being typed and the context keyword before it."""
@@ -72,7 +53,7 @@ class AutocompleteMixin:
 
         return current_word, ""
 
-    def _get_autocomplete_suggestions(self, word: str, context: str) -> list[str]:
+    def _get_autocomplete_suggestions(self: AppProtocol, word: str, context: str) -> list[str]:
         """Get autocomplete suggestions based on context."""
         suggestions = []
 
@@ -82,7 +63,6 @@ class AutocompleteMixin:
             suggestions = self._schema_cache["procedures"]
         elif context.startswith("column:"):
             table_name = context.split(":", 1)[1].lower()
-            # Lazy load columns if not cached
             if table_name not in self._schema_cache["columns"]:
                 self._load_columns_for_table(table_name)
             suggestions = self._schema_cache["columns"].get(table_name, [])
@@ -98,20 +78,17 @@ class AutocompleteMixin:
 
         return suggestions[:50]
 
-    def _load_columns_for_table(self, table_name: str) -> None:
+    def _load_columns_for_table(self: AppProtocol, table_name: str) -> None:
         """Lazy load columns for a specific table (async via worker)."""
         if not self.current_connection or not self.current_adapter:
             return
 
-        # Initialize _columns_loading if not present
         if not hasattr(self, "_columns_loading") or self._columns_loading is None:
             self._columns_loading = set()
 
-        # Skip if already loading this table
         if table_name in self._columns_loading:
             return
 
-        # Check if we have metadata for this table
         metadata = self._table_metadata.get(table_name)
         if not metadata:
             return
@@ -120,7 +97,6 @@ class AutocompleteMixin:
         self._columns_loading.add(table_name)
 
         def work() -> None:
-            """Run in worker thread."""
             adapter = self.current_adapter
             connection = self.current_connection
             if not adapter or not connection:
@@ -132,7 +108,6 @@ class AutocompleteMixin:
                 except Exception:
                     column_names = []
 
-            # Update cache on main thread
             self.call_from_thread(
                 self._on_autocomplete_columns_loaded,
                 table_name,
@@ -143,17 +118,15 @@ class AutocompleteMixin:
         self.run_worker(work, name=f"load-columns-{table_name}", thread=True, exclusive=False)
 
     def _on_autocomplete_columns_loaded(
-        self, table_name: str, actual_table_name: str, column_names: list[str]
+        self: AppProtocol, table_name: str, actual_table_name: str, column_names: list[str]
     ) -> None:
         """Handle column load completion for autocomplete on main thread."""
         self._columns_loading.discard(table_name)
         self._schema_cache["columns"][table_name] = column_names
-        # Also cache by actual table name
         self._schema_cache["columns"][actual_table_name.lower()] = column_names
 
-    def _show_autocomplete(self, suggestions: list[str], filter_text: str) -> None:
+    def _show_autocomplete(self: AppProtocol, suggestions: list[str], filter_text: str) -> None:
         """Show the autocomplete dropdown with suggestions."""
-        from ...widgets import AutocompleteDropdown
 
         if not suggestions:
             self._hide_autocomplete()
@@ -168,12 +141,15 @@ class AutocompleteMixin:
         dropdown.show()
         self._autocomplete_visible = True
 
-    def _hide_autocomplete(self) -> None:
+    def _hide_autocomplete(self: AppProtocol) -> None:
         """Hide the autocomplete dropdown."""
-        self.autocomplete_dropdown.hide()
+        try:
+            self.autocomplete_dropdown.hide()
+        except Exception:
+            pass  # Widget not mounted yet
         self._autocomplete_visible = False
 
-    def _apply_autocomplete(self) -> None:
+    def _apply_autocomplete(self: AppProtocol) -> None:
         """Apply the selected autocomplete suggestion."""
         selected = self.autocomplete_dropdown.get_selected()
 
@@ -188,15 +164,11 @@ class AutocompleteMixin:
         cursor_pos = self._location_to_offset(text, cursor_loc)
 
         word_start = cursor_pos
-        while word_start > 0 and text[word_start - 1] not in " \t\n,()[]":
+        while word_start > 0 and text[word_start - 1] not in " \t\n,()[].":
             word_start -= 1
 
         if word_start > 0 and text[word_start - 1] == ".":
-            new_text = (
-                text[:cursor_pos]
-                + selected[len(text[word_start:cursor_pos]) :]
-                + text[cursor_pos:]
-            )
+            new_text = text[:cursor_pos] + selected[len(text[word_start:cursor_pos]) :] + text[cursor_pos:]
         else:
             new_text = text[:word_start] + selected + text[cursor_pos:]
 
@@ -208,7 +180,7 @@ class AutocompleteMixin:
 
         self._hide_autocomplete()
 
-    def _location_to_offset(self, text: str, location: tuple) -> int:
+    def _location_to_offset(self, text: str, location: tuple[int, int]) -> int:
         """Convert (row, col) location to text offset."""
         row, col = location
         lines = text.split("\n")
@@ -216,7 +188,7 @@ class AutocompleteMixin:
         offset += col
         return min(offset, len(text))
 
-    def _offset_to_location(self, text: str, offset: int) -> tuple:
+    def _offset_to_location(self, text: str, offset: int) -> tuple[int, int]:
         """Convert text offset to (row, col) location."""
         lines = text.split("\n")
         current_offset = 0
@@ -226,7 +198,7 @@ class AutocompleteMixin:
             current_offset += len(line) + 1
         return (len(lines) - 1, len(lines[-1]) if lines else 0)
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+    def on_text_area_changed(self: AppProtocol, event: TextArea.Changed) -> None:
         """Handle text changes in the query editor for autocomplete."""
         from ...widgets import VimMode
 
@@ -264,7 +236,21 @@ class AutocompleteMixin:
         else:
             self._hide_autocomplete()
 
-    def on_key(self, event) -> None:
+    def action_autocomplete_next(self: AppProtocol) -> None:
+        """Move to next autocomplete suggestion."""
+        if self._autocomplete_visible:
+            self.autocomplete_dropdown.move_selection(1)
+
+    def action_autocomplete_prev(self: AppProtocol) -> None:
+        """Move to previous autocomplete suggestion."""
+        if self._autocomplete_visible:
+            self.autocomplete_dropdown.move_selection(-1)
+
+    def action_autocomplete_close(self: AppProtocol) -> None:
+        """Close autocomplete dropdown without exiting insert mode."""
+        self._hide_autocomplete()
+
+    def on_key(self: AppProtocol, event: Any) -> None:
         """Handle key events for autocomplete navigation."""
         from ...widgets import VimMode
 
@@ -289,8 +275,10 @@ class AutocompleteMixin:
                 event.stop()
         elif event.key == "escape":
             self._hide_autocomplete()
+            event.prevent_default()
+            event.stop()
 
-    def _load_schema_cache(self) -> None:
+    def _load_schema_cache(self: AppProtocol) -> None:
         """Load database schema for autocomplete asynchronously."""
         if not self.current_connection or not self.current_config or not self.current_adapter:
             return
@@ -318,7 +306,7 @@ class AutocompleteMixin:
             exclusive=True,
         )
 
-    def _start_schema_spinner(self) -> None:
+    def _start_schema_spinner(self: AppProtocol) -> None:
         """Start the schema indexing spinner animation."""
         self._schema_indexing = True
         self._schema_spinner_index = 0
@@ -328,7 +316,7 @@ class AutocompleteMixin:
             self._schema_spinner_timer.stop()
         self._schema_spinner_timer = self.set_interval(0.1, self._animate_schema_spinner)
 
-    def _stop_schema_spinner(self) -> None:
+    def _stop_schema_spinner(self: AppProtocol) -> None:
         """Stop the schema indexing spinner animation."""
         self._schema_indexing = False
         if hasattr(self, "_schema_spinner_timer") and self._schema_spinner_timer is not None:
@@ -336,14 +324,14 @@ class AutocompleteMixin:
             self._schema_spinner_timer = None
         self._update_status_bar()
 
-    def _animate_schema_spinner(self) -> None:
+    def _animate_schema_spinner(self: AppProtocol) -> None:
         """Update schema spinner animation frame."""
         if not self._schema_indexing:
             return
         self._schema_spinner_index = (self._schema_spinner_index + 1) % len(SPINNER_FRAMES)
         self._update_status_bar()
 
-    def action_cancel_schema_indexing(self) -> None:
+    def action_cancel_schema_indexing(self: AppProtocol) -> None:
         """Cancel ongoing schema indexing."""
         if hasattr(self, "_schema_worker") and self._schema_worker is not None:
             self._schema_worker.cancel()
@@ -351,7 +339,7 @@ class AutocompleteMixin:
         self._stop_schema_spinner()
         self.notify("Schema indexing cancelled")
 
-    async def _load_schema_cache_async(self) -> None:
+    async def _load_schema_cache_async(self: AppProtocol) -> None:
         """Load database schema asynchronously in a worker thread.
 
         Only loads tables, views, and procedures. Columns are loaded lazily.
@@ -376,14 +364,13 @@ class AutocompleteMixin:
 
         try:
             # Get database list in thread
+            databases: list[str | None]
             if adapter.supports_multiple_databases:
                 db = config.database
                 if db and db.lower() not in ("", "master"):
                     databases = [db]
                 else:
-                    all_dbs = await asyncio.to_thread(
-                        adapter.get_databases, connection
-                    )
+                    all_dbs = await asyncio.to_thread(adapter.get_databases, connection)
                     system_dbs = {"master", "tempdb", "model", "msdb"}
                     databases = [d for d in all_dbs if d.lower() not in system_dbs]
             else:
@@ -392,9 +379,7 @@ class AutocompleteMixin:
             for database in databases:
                 try:
                     # Get tables in thread (NO columns - lazy loaded)
-                    tables = await asyncio.to_thread(
-                        adapter.get_tables, connection, database
-                    )
+                    tables = await asyncio.to_thread(adapter.get_tables, connection, database)
                     for schema_name, table_name in tables:
                         display_name = adapter.format_table_name(schema_name, table_name)
                         schema_cache["tables"].append(display_name)
@@ -407,9 +392,7 @@ class AutocompleteMixin:
                             table_metadata[full_name.lower()] = (schema_name, table_name, database)
 
                     # Get views in thread (NO columns - lazy loaded)
-                    views = await asyncio.to_thread(
-                        adapter.get_views, connection, database
-                    )
+                    views = await asyncio.to_thread(adapter.get_views, connection, database)
                     for schema_name, view_name in views:
                         display_name = adapter.format_table_name(schema_name, view_name)
                         schema_cache["views"].append(display_name)
@@ -422,9 +405,7 @@ class AutocompleteMixin:
                             table_metadata[full_name.lower()] = (schema_name, view_name, database)
 
                     if adapter.supports_stored_procedures:
-                        procedures = await asyncio.to_thread(
-                            adapter.get_procedures, connection, database
-                        )
+                        procedures = await asyncio.to_thread(adapter.get_procedures, connection, database)
                         schema_cache["procedures"].extend(procedures)
 
                 except Exception:
@@ -443,7 +424,7 @@ class AutocompleteMixin:
         finally:
             self._stop_schema_spinner()
 
-    def _update_schema_cache(self, schema_cache: dict, table_metadata: dict | None = None) -> None:
+    def _update_schema_cache(self: AppProtocol, schema_cache: dict, table_metadata: dict | None = None) -> None:
         """Update the schema cache (called on main thread)."""
         self._schema_cache = schema_cache
         if table_metadata is not None:

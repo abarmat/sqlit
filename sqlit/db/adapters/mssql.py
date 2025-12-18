@@ -18,6 +18,18 @@ class SQLServerAdapter(DatabaseAdapter):
         return "SQL Server"
 
     @property
+    def install_extra(self) -> str:
+        return "mssql"
+
+    @property
+    def install_package(self) -> str:
+        return "pyodbc"
+
+    @property
+    def driver_import_names(self) -> tuple[str, ...]:
+        return ("pyodbc",)
+
+    @property
     def supports_multiple_databases(self) -> bool:
         return True
 
@@ -29,11 +41,8 @@ class SQLServerAdapter(DatabaseAdapter):
     def default_schema(self) -> str:
         return "dbo"
 
-    def _build_connection_string(self, config: "ConnectionConfig") -> str:
+    def _build_connection_string(self, config: ConnectionConfig) -> str:
         """Build ODBC connection string from config.
-
-        This method encapsulates the SQL Server-specific connection string
-        building logic that was previously in ConnectionConfig.get_connection_string().
 
         Args:
             config: Connection configuration.
@@ -61,23 +70,30 @@ class SQLServerAdapter(DatabaseAdapter):
         elif auth == AuthType.SQL_SERVER:
             return base + f"UID={config.username};PWD={config.password};"
         elif auth == AuthType.AD_PASSWORD:
-            return (
-                base
-                + f"Authentication=ActiveDirectoryPassword;"
-                f"UID={config.username};PWD={config.password};"
-            )
+            return base + f"Authentication=ActiveDirectoryPassword;" f"UID={config.username};PWD={config.password};"
         elif auth == AuthType.AD_INTERACTIVE:
-            return (
-                base + f"Authentication=ActiveDirectoryInteractive;" f"UID={config.username};"
-            )
+            return base + f"Authentication=ActiveDirectoryInteractive;" f"UID={config.username};"
         elif auth == AuthType.AD_INTEGRATED:
             return base + "Authentication=ActiveDirectoryIntegrated;"
 
         return base + "Trusted_Connection=yes;"
 
-    def connect(self, config: "ConnectionConfig") -> Any:
+    def connect(self, config: ConnectionConfig) -> Any:
         """Connect to SQL Server using pyodbc."""
-        import pyodbc
+        try:
+            import pyodbc
+        except ImportError as e:
+            from ...db.exceptions import MissingDriverError
+
+            if not self.install_extra or not self.install_package:
+                raise e
+            raise MissingDriverError(self.name, self.install_extra, self.install_package) from e
+
+        installed = list(pyodbc.drivers())
+        if config.driver not in installed:
+            from ...db.exceptions import MissingODBCDriverError
+
+            raise MissingODBCDriverError(config.driver, installed)
 
         conn_str = self._build_connection_string(config)
         return pyodbc.connect(conn_str, timeout=10)
@@ -113,8 +129,7 @@ class SQLServerAdapter(DatabaseAdapter):
             )
         else:
             cursor.execute(
-                "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS "
-                "ORDER BY TABLE_SCHEMA, TABLE_NAME"
+                "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS " "ORDER BY TABLE_SCHEMA, TABLE_NAME"
             )
         return [(row[0], row[1]) for row in cursor.fetchall()]
 
@@ -124,6 +139,33 @@ class SQLServerAdapter(DatabaseAdapter):
         """Get columns for a table from SQL Server."""
         cursor = conn.cursor()
         schema = schema or "dbo"
+
+        # Get primary key columns
+        if database:
+            cursor.execute(
+                f"SELECT kcu.COLUMN_NAME "
+                f"FROM [{database}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc "
+                f"JOIN [{database}].INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu "
+                f"  ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
+                f"  AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA "
+                f"WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' "
+                f"AND tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?",
+                (schema, table),
+            )
+        else:
+            cursor.execute(
+                "SELECT kcu.COLUMN_NAME "
+                "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc "
+                "JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu "
+                "  ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
+                "  AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA "
+                "WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' "
+                "AND tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?",
+                (schema, table),
+            )
+        pk_columns = {row[0] for row in cursor.fetchall()}
+
+        # Get all columns
         if database:
             cursor.execute(
                 f"SELECT COLUMN_NAME, DATA_TYPE FROM [{database}].INFORMATION_SCHEMA.COLUMNS "
@@ -136,7 +178,7 @@ class SQLServerAdapter(DatabaseAdapter):
                 "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
                 (schema, table),
             )
-        return [ColumnInfo(name=row[0], data_type=row[1]) for row in cursor.fetchall()]
+        return [ColumnInfo(name=row[0], data_type=row[1], is_primary_key=row[0] in pk_columns) for row in cursor.fetchall()]
 
     def get_procedures(self, conn: Any, database: str | None = None) -> list[str]:
         """Get stored procedures from SQL Server."""
@@ -161,18 +203,14 @@ class SQLServerAdapter(DatabaseAdapter):
         escaped = name.replace("]", "]]")
         return f"[{escaped}]"
 
-    def build_select_query(
-        self, table: str, limit: int, database: str | None = None, schema: str | None = None
-    ) -> str:
+    def build_select_query(self, table: str, limit: int, database: str | None = None, schema: str | None = None) -> str:
         """Build SELECT TOP query for SQL Server."""
         schema = schema or "dbo"
         if database:
             return f"SELECT TOP {limit} * FROM [{database}].[{schema}].[{table}]"
         return f"SELECT TOP {limit} * FROM [{schema}].[{table}]"
 
-    def execute_query(
-        self, conn: Any, query: str, max_rows: int | None = None
-    ) -> tuple[list[str], list[tuple], bool]:
+    def execute_query(self, conn: Any, query: str, max_rows: int | None = None) -> tuple[list[str], list[tuple], bool]:
         """Execute a query on SQL Server with optional row limit."""
         cursor = conn.cursor()
         cursor.execute(query)
@@ -193,6 +231,6 @@ class SQLServerAdapter(DatabaseAdapter):
         """Execute a non-query on SQL Server."""
         cursor = conn.cursor()
         cursor.execute(query)
-        rowcount = cursor.rowcount
+        rowcount = int(cursor.rowcount)
         conn.commit()
         return rowcount

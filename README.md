@@ -32,7 +32,7 @@ A lightweight TUI for people who just want to run some queries fast.
 
 
 ## Motivation
-I usually do my work in the terminal, but I found myself either having to boot up massively bloated GUI's like SSMS or Vscode for the simple task of merely browsing my databases and doing some queries toward them. For the vast majority of my use cases, I never used any of the advanced features for inspection and debugging that SSMS and other feature-rich clients provide. 
+I usually do my work in the terminal, but I found myself either having to boot up massively bloated GUI's like SSMS or Vscode for the simple task of merely browsing my databases and doing some queries toward them. For the vast majority of my use cases, I never used any of the advanced features for inspection and debugging that SSMS and other feature-rich clients provide.
 
 I had the unfortunate situation where doing queries became a pain-point due to the massive operation it is to open SSMS and it's lack of intuitive keyboard only navigation.
 
@@ -45,11 +45,56 @@ sqlit is a lightweight database TUI that is easy to use and beautiful to look at
 
 ## Installation
 
+### Method 1: `pipx` (Recommended)
+
+This is the recommended method. It installs `sqlit-tui` in an isolated environment, so optional drivers are easy to add later.
+
+1.  **Install pipx:** If you don't have pipx, you can install it with:
+    ```bash
+    python3 -m pip install --user pipx
+    python3 -m pipx ensurepath
+    ```
+    *(You may need to restart your terminal after this step)*
+
+2.  **Install sqlit-tui:**
+    ```bash
+    pipx install sqlit-tui
+    ```
+
+3.  **Optional drivers (only if you need them):** `sqlit` will tell you what to install when a driver is missing, but you can also pre-install them. For example:
+    ```bash
+    # PostgreSQL / Supabase / CockroachDB
+    pipx inject sqlit-tui psycopg2-binary
+
+    # MySQL
+    pipx inject sqlit-tui mysql-connector-python
+    ```
+
+### Method 2: `uv` (Alternative)
+
+`uv` is a fast, modern installer. This also keeps things isolated and makes optional drivers easy.
+
 ```bash
-pip install sqlit-tui
+uv tool install sqlit-tui
 ```
 
-If you are missing Python packages for your database provider, sqlit will help you install them when you attempt to connect. If you want to pre-install requirements, see [Adapter Requirements](#adapter-requirements).
+### Method 3: `pip` (Alternative)
+
+*(Note: To avoid dependency conflicts, installing in a virtual environment is recommended.)*
+
+You can install `sqlit-tui` and drivers directly with `pip` using "extras". The application will guide you if a driver is missing.
+If you installed Python via a system package manager (Homebrew, apt, pacman, etc.), `pip install` may be restricted; in that case, use `pipx`, `uv`, or a virtual environment.
+
+```bash
+# To install with PostgreSQL and MySQL support
+pip install "sqlit-tui[postgres,mysql]"
+
+# To add a driver to an existing installation
+pip install "sqlit-tui[mariadb]"
+
+# To install all drivers
+pip install "sqlit-tui[all]"
+```
 
 ## Usage
 
@@ -78,20 +123,29 @@ sqlit query -c "MyConnection" -q "SELECT * FROM Users" --format csv
 sqlit query -c "MyConnection" -f "script.sql" --format json
 
 # Create connections for different databases
-sqlit connection create --name "MySqlServer" --db-type mssql --server "localhost" --auth-type sql
-sqlit connection create --name "MyPostgres" --db-type postgresql --server "localhost" --username "user" --password "pass"
-sqlit connection create --name "MyMySQL" --db-type mysql --server "localhost" --username "user" --password "pass"
-sqlit connection create --name "MyCockroach" --db-type cockroachdb --server "localhost" --port "26257" --database "defaultdb" --username "root"
-sqlit connection create --name "MyLocalDB" --db-type sqlite --file-path "/path/to/database.db"
-sqlit connection create --name "MyTurso" --db-type turso --server "libsql://your-db.turso.io" --password "your-auth-token"
+sqlit connections add mssql --name "MySqlServer" --server "localhost" --auth-type sql
+sqlit connections add postgresql --name "MyPostgres" --server "localhost" --username "user" --password "pass"
+sqlit connections add mysql --name "MyMySQL" --server "localhost" --username "user" --password "pass"
+sqlit connections add cockroachdb --name "MyCockroach" --server "localhost" --port "26257" --database "defaultdb" --username "root"
+sqlit connections add sqlite --name "MyLocalDB" --file-path "/path/to/database.db"
+sqlit connections add turso --name "MyTurso" --server "libsql://your-db.turso.io" --password "your-auth-token"
 
 # Connect via SSH tunnel
-sqlit connection create --name "RemoteDB" --db-type postgresql --server "db-host" --username "dbuser" --password "dbpass" \
+sqlit connections add postgresql --name "RemoteDB" --server "db-host" --username "dbuser" --password "dbpass" \
   --ssh-enabled --ssh-host "ssh.example.com" --ssh-username "sshuser" --ssh-auth-type password --ssh-password "sshpass"
 
+# Temporary (not saved) connection
+sqlit connect sqlite --file-path "/path/to/database.db"
+
+# Provider-specific CLI help
+sqlit connect -h
+sqlit connect supabase -h
+sqlit connections add -h
+sqlit connections add supabase -h
+
 # Manage connections
-sqlit connection list
-sqlit connection delete "MyConnection"
+sqlit connections list
+sqlit connections delete "MyConnection"
 ```
 
 ## Keybindings
@@ -105,6 +159,7 @@ sqlit connection delete "MyConnection"
 | `h` | Query history |
 | `d` | Clear query |
 | `n` | New query (clear all) |
+| `y` | Copy query (when query editor is focused) |
 | `v` / `y` / `Y` / `a` | View cell / Copy cell / Copy row / Copy all |
 | `Ctrl+Q` | Quit |
 | `?` | Help |
@@ -134,14 +189,16 @@ Connections and settings are stored in `~/.sqlit/`.
 
 ### How are sensitive credentials stored?
 
-Credentials are stored in plain text in a protected directory (`~/.sqlit/`) with restricted file permissions (700/600).
+Connection details are stored in `~/.sqlit/connections.json`, but passwords are stored in your OS keyring when available (macOS Keychain, Windows Credential Locker, Linux Secret Service).
+
+If a keyring backend isn't available, `sqlit` will ask whether to store passwords as plaintext in `~/.sqlit/` (protected permissions). If you decline, you’ll be prompted when needed.
 
 ### How does sqlit compare to Harlequin, Lazysql, etc.?
 
 sqlit is inspired by [lazygit](https://github.com/jesseduffield/lazygit) - you can just jump in and there's no need for external documentation. The keybindings are shown at the bottom of the screen and the UI is designed to be intuitive without memorizing shortcuts.
 
 Key differences:
-- **No need for external documentation** - Sqlit embrace the "lazy" approach in that a user should be able to jump in and use it right away intuitively. There should be no setup instructions. If python packages are required for certain adapters, sqlit will help you install them as you need them. 
+- **No need for external documentation** - Sqlit embrace the "lazy" approach in that a user should be able to jump in and use it right away intuitively. There should be no setup instructions. If python packages are required for certain adapters, sqlit will help you install them as you need them.
 - **No CLI config required** - Just run `sqlit` and pick a connection from the UI
 - **Lightweight** - While Lazysql or Harlequin offer more features, I experienced that for the vast majority of cases, all I needed was a simple and fast way to connect and run queries. Sqlit is focused on doing a limited amount of things really well.
 
@@ -155,24 +212,23 @@ sqlit is built with [Textual](https://github.com/Textualize/textual) and inspire
 
 See `CONTRIBUTING.md` for development setup, testing, CI, and CockroachDB quickstart steps.
 
-## Adapter Requirements
+### Driver Reference
 
-Each database provider requires specific Python packages. sqlit will prompt you to install these when needed, but you can also pre-install them:
+Most of the time you can just run `sqlit` and connect. If a Python driver is missing, `sqlit` will show (and often run) the right install command for your environment.
 
-| Database | Package | Install Command |
-|----------|---------|-----------------|
-| SQLite | *(built-in)* | No installation needed |
-| SQL Server | `pyodbc` | `pip install pyodbc` |
-| PostgreSQL | `psycopg2-binary` | `pip install psycopg2-binary` |
-| MySQL | `mysql-connector-python` | `pip install mysql-connector-python` |
-| MariaDB | `mariadb` | `pip install mariadb` |
-| Oracle | `oracledb` | `pip install oracledb` |
-| DuckDB | `duckdb` | `pip install duckdb` |
-| CockroachDB | `psycopg2-binary` | `pip install psycopg2-binary` |
-| Supabase | `psycopg2-binary` | `pip install psycopg2-binary` |
-| Turso | `libsql-client` | `pip install libsql-client` |
+| Database | Driver package | `pipx` | `pip` / venv |
+| :--- | :--- | :--- | :--- |
+| SQLite | *(built-in)* | *(built-in)* | *(built-in)* |
+| PostgreSQL / CockroachDB / Supabase | `psycopg2-binary` | `pipx inject sqlit-tui psycopg2-binary` | `python -m pip install psycopg2-binary` |
+| SQL Server | `pyodbc` | `pipx inject sqlit-tui pyodbc` | `python -m pip install pyodbc` |
+| MySQL | `mysql-connector-python` | `pipx inject sqlit-tui mysql-connector-python` | `python -m pip install mysql-connector-python` |
+| MariaDB | `mariadb` | `pipx inject sqlit-tui mariadb` | `python -m pip install mariadb` |
+| Oracle | `oracledb` | `pipx inject sqlit-tui oracledb` | `python -m pip install oracledb` |
+| DuckDB | `duckdb` | `pipx inject sqlit-tui duckdb` | `python -m pip install duckdb` |
+| Turso | `libsql-client` | `pipx inject sqlit-tui libsql-client` | `python -m pip install libsql-client` |
+| Cloudflare D1 | `requests` | `pipx inject sqlit-tui requests` | `python -m pip install requests` |
 
-**Note:** SQL Server also requires the ODBC driver. On first connection attempt, sqlit will detect if it's missing and help you install it.
+**Note:** SQL Server also requires the platform-specific ODBC driver. On your first connection attempt, `sqlit` can help you install it if it's missing.
 
 ## License
 

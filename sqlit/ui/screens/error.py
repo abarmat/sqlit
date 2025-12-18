@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import textwrap
-
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
@@ -31,15 +29,13 @@ class ErrorScreen(ModalScreen):
         width: 60;
         max-width: 80%;
         border: solid $error;
+        border-title-color: $error;
         border-subtitle-color: $error;
+        color: $error;
     }
 
     #error-message {
         padding: 1;
-    }
-
-    #error-message.flash {
-        background: $error 50%;
     }
     """
 
@@ -50,16 +46,20 @@ class ErrorScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         shortcuts = [("Copy", "y"), ("Close", "<enter>")]
-        wrapped = textwrap.fill(self.message, width=56)
         with Dialog(id="error-dialog", title=self.title_text, shortcuts=shortcuts):
-            yield Static(wrapped, id="error-message")
+            yield Static(self.message, id="error-message")
 
     def action_close(self) -> None:
         self.dismiss()
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        # Prevent underlying screens from receiving actions when another modal is on top.
+        if self.app.screen is not self:
+            return False
+        return super().check_action(action, parameters)
+
     def action_copy_message(self) -> None:
+        from ...widgets import flash_widget
+
         self.app.copy_to_clipboard(self.message)
-        # Flash the message to indicate copy
-        msg = self.query_one("#error-message", Static)
-        msg.add_class("flash")
-        self.set_timer(0.15, lambda: msg.remove_class("flash"))
+        flash_widget(self.query_one("#error-message", Static))

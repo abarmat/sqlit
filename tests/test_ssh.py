@@ -24,8 +24,9 @@ class TestSSHTunnelIntegration:
         Note: SSH tests may fail when run together rapidly due to SSH server
         connection limits. Run individually with: pytest tests/test_ssh.py -k <test_name>
         """
-        time.sleep(1)  # Wait before each test
+        time.sleep(2)  # Wait before each test
         yield
+        time.sleep(1)  # Wait after each test for connections to fully close
 
     def test_create_ssh_connection(self, ssh_postgres_db, cli_runner):
         """Test creating a PostgreSQL connection with SSH tunnel via CLI."""
@@ -45,20 +46,32 @@ class TestSSHTunnelIntegration:
         try:
             # Create connection with SSH tunnel
             result = cli_runner(
-                "connection", "create",
-                "--name", connection_name,
-                "--db-type", "postgresql",
-                "--server", SSH_REMOTE_DB_HOST,
-                "--port", str(SSH_REMOTE_DB_PORT),
-                "--database", ssh_postgres_db,
-                "--username", POSTGRES_USER,
-                "--password", POSTGRES_PASSWORD,
+                "connections",
+                "add",
+                "postgresql",
+                "--name",
+                connection_name,
+                "--server",
+                SSH_REMOTE_DB_HOST,
+                "--port",
+                str(SSH_REMOTE_DB_PORT),
+                "--database",
+                ssh_postgres_db,
+                "--username",
+                POSTGRES_USER,
+                "--password",
+                POSTGRES_PASSWORD,
                 "--ssh-enabled",
-                "--ssh-host", SSH_HOST,
-                "--ssh-port", str(SSH_PORT),
-                "--ssh-username", SSH_USER,
-                "--ssh-auth-type", "password",
-                "--ssh-password", SSH_PASSWORD,
+                "--ssh-host",
+                SSH_HOST,
+                "--ssh-port",
+                str(SSH_PORT),
+                "--ssh-username",
+                SSH_USER,
+                "--ssh-auth-type",
+                "password",
+                "--ssh-password",
+                SSH_PASSWORD,
             )
             assert result.returncode == 0
             assert "created successfully" in result.stdout
@@ -76,8 +89,10 @@ class TestSSHTunnelIntegration:
         """Test executing SELECT query through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT * FROM test_users ORDER BY id",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT * FROM test_users ORDER BY id",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout
@@ -89,8 +104,10 @@ class TestSSHTunnelIntegration:
         """Test executing SELECT with WHERE clause through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT name, email FROM test_users WHERE id = 1",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT name, email FROM test_users WHERE id = 1",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout
@@ -101,9 +118,12 @@ class TestSSHTunnelIntegration:
         """Test query output in JSON format through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
-            "--format", "json",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
+            "--format",
+            "json",
         )
         assert result.returncode == 0
 
@@ -118,9 +138,12 @@ class TestSSHTunnelIntegration:
         """Test query output in CSV format through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
-            "--format", "csv",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
+            "--format",
+            "csv",
         )
         assert result.returncode == 0
         assert "id,name" in result.stdout
@@ -131,8 +154,10 @@ class TestSSHTunnelIntegration:
         """Test aggregate query through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT COUNT(*) as user_count FROM test_users",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT COUNT(*) as user_count FROM test_users",
         )
         assert result.returncode == 0
         assert "3" in result.stdout
@@ -141,16 +166,20 @@ class TestSSHTunnelIntegration:
         """Test INSERT statement through SSH tunnel."""
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "INSERT INTO test_users (id, name, email) VALUES (4, 'David', 'david@example.com')",
+            "-c",
+            ssh_connection,
+            "-q",
+            "INSERT INTO test_users (id, name, email) VALUES (4, 'David', 'david@example.com')",
         )
         assert result.returncode == 0
 
         # Verify the insert
         result = cli_runner(
             "query",
-            "-c", ssh_connection,
-            "-q", "SELECT * FROM test_users WHERE id = 4",
+            "-c",
+            ssh_connection,
+            "-q",
+            "SELECT * FROM test_users WHERE id = 4",
         )
         assert "David" in result.stdout
 
@@ -171,20 +200,32 @@ class TestSSHTunnelIntegration:
 
         # Create connection first
         cli_runner(
-            "connection", "create",
-            "--name", connection_name,
-            "--db-type", "postgresql",
-            "--server", SSH_REMOTE_DB_HOST,
-            "--port", str(SSH_REMOTE_DB_PORT),
-            "--database", ssh_postgres_db,
-            "--username", POSTGRES_USER,
-            "--password", POSTGRES_PASSWORD,
+            "connections",
+            "add",
+            "postgresql",
+            "--name",
+            connection_name,
+            "--server",
+            SSH_REMOTE_DB_HOST,
+            "--port",
+            str(SSH_REMOTE_DB_PORT),
+            "--database",
+            ssh_postgres_db,
+            "--username",
+            POSTGRES_USER,
+            "--password",
+            POSTGRES_PASSWORD,
             "--ssh-enabled",
-            "--ssh-host", SSH_HOST,
-            "--ssh-port", str(SSH_PORT),
-            "--ssh-username", SSH_USER,
-            "--ssh-auth-type", "password",
-            "--ssh-password", SSH_PASSWORD,
+            "--ssh-host",
+            SSH_HOST,
+            "--ssh-port",
+            str(SSH_PORT),
+            "--ssh-username",
+            SSH_USER,
+            "--ssh-auth-type",
+            "password",
+            "--ssh-password",
+            SSH_PASSWORD,
         )
 
         # Delete it

@@ -5,7 +5,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import OptionList, Static
+from textual.widgets import OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from ...widgets import Dialog
@@ -18,6 +18,7 @@ class DriverSetupScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel"),
         Binding("enter", "select", "Select"),
         Binding("i", "install_driver", "Install"),
+        Binding("y", "yank", "Yank"),
     ]
 
     CSS = """
@@ -58,6 +59,7 @@ class DriverSetupScreen(ModalScreen):
         super().__init__()
         self.installed_drivers = installed_drivers or []
         self._install_commands: list[str] = []
+        self._install_script: str = ""
 
     def compose(self) -> ComposeResult:
         from ...drivers import SUPPORTED_DRIVERS, get_install_commands, get_os_info
@@ -67,10 +69,10 @@ class DriverSetupScreen(ModalScreen):
 
         if has_drivers:
             title = "Select ODBC Driver"
-            shortcuts = [("Select", "<enter>"), ("Cancel", "<esc>")]
+            shortcuts = [("Select", "<enter>"), ("Yank", "y"), ("Cancel", "<esc>")]
         else:
             title = "No ODBC Driver Found"
-            shortcuts = [("Select", "<enter>"), ("Install", "I"), ("Cancel", "<esc>")]
+            shortcuts = [("Select", "<enter>"), ("Install", "I"), ("Yank", "y"), ("Cancel", "<esc>")]
 
         with Dialog(id="driver-dialog", title=title, shortcuts=shortcuts):
             if has_drivers:
@@ -89,7 +91,7 @@ class DriverSetupScreen(ModalScreen):
             options = []
             if has_drivers:
                 for driver in self.installed_drivers:
-                    options.append(Option(f"[green]{driver}[/]", id=driver))
+                    options.append(Option(f"[#4ADE80]{driver}[/]", id=driver))
             else:
                 for driver in SUPPORTED_DRIVERS[:3]:  # Show top 3 options
                     options.append(Option(f"[dim]{driver}[/] (not installed)", id=driver))
@@ -101,10 +103,12 @@ class DriverSetupScreen(ModalScreen):
                 install_info = get_install_commands()
                 if install_info:
                     self._install_commands = install_info.commands
-                    commands_text = "\n".join(install_info.commands)
-                    yield Static(
-                        f"[bold]{install_info.description}:[/]\n\n{commands_text}",
+                    self._install_script = "\n".join(install_info.commands).strip()
+                    yield TextArea(
+                        f"{install_info.description}:\n\n{self._install_script}\n",
                         id="install-commands",
+                        read_only=True,
+                        language="bash",
                     )
 
     def on_mount(self) -> None:
@@ -116,7 +120,7 @@ class DriverSetupScreen(ModalScreen):
             option = option_list.get_option_at_index(option_list.highlighted)
             self.dismiss(("select", option.id))
 
-    def on_option_list_option_selected(self, event) -> None:
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(("select", event.option.id))
 
     def action_install_driver(self) -> None:
@@ -126,6 +130,7 @@ class DriverSetupScreen(ModalScreen):
             return
 
         from ...drivers import get_os_info
+
         os_type, _ = get_os_info()
 
         # On Windows, just show instructions
@@ -136,8 +141,16 @@ class DriverSetupScreen(ModalScreen):
             )
             return
 
-        self.notify("Installing driver... This may ask for your password.", timeout=5)
         self.dismiss(("install", self._install_commands))
+
+    def action_yank(self) -> None:
+        from ...widgets import flash_widget
+
+        script = self._install_script.strip()
+        if not script:
+            return
+        self.app.copy_to_clipboard(script)
+        flash_widget(self.query_one("#install-commands", TextArea))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

@@ -31,9 +31,7 @@ class TestDialogKeybindings:
             await pilot.pause()
 
             # Verify dialog is shown
-            has_error = any(
-                isinstance(screen, ErrorScreen) for screen in app.screen_stack
-            )
+            has_error = any(isinstance(screen, ErrorScreen) for screen in app.screen_stack)
             assert has_error
 
             # Try to focus query - should be blocked by modal
@@ -91,7 +89,6 @@ class TestDialogKeybindings:
         copied_text = {"value": None}
 
         async with app.run_test(size=(100, 35)) as pilot:
-            original_copy = app.copy_to_clipboard
 
             def mock_copy(text):
                 copied_text["value"] = text
@@ -162,9 +159,12 @@ class TestDialogKeybindings:
 
     @pytest.mark.asyncio
     async def test_confirm_dialog_escape_cancels(self):
-        """Confirm dialog escape key should cancel and close."""
+        """Confirm dialog escape key should cancel and close.
+
+        Note: Escape returns None (cancelled) vs False (explicit No).
+        """
         app = SSMSTUI()
-        result_holder = {"result": None}
+        result_holder = {"result": "not_called"}
 
         def capture_result(result):
             result_holder["result"] = result
@@ -178,7 +178,7 @@ class TestDialogKeybindings:
             await pilot.pause()
 
             assert not any(isinstance(screen, ConfirmScreen) for screen in app.screen_stack)
-            assert result_holder["result"] is False
+            assert result_holder["result"] is None  # Escape returns None (cancelled)
 
     @pytest.mark.asyncio
     async def test_help_dialog_blocks_normal_actions(self):
@@ -249,9 +249,7 @@ class TestDialogKeybindings:
             await pilot.pause()
 
             # Only the error dialog should be open, not theme picker
-            error_count = sum(
-                1 for screen in app.screen_stack if isinstance(screen, ErrorScreen)
-            )
+            error_count = sum(1 for screen in app.screen_stack if isinstance(screen, ErrorScreen))
             assert error_count == 1
             # Screen stack should just have main screen + error dialog
             assert len(app.screen_stack) == 2

@@ -19,6 +19,11 @@ venv/
 *.swp
 *.swo
 
+# Local caches
+.cache/
+.ruff_cache/
+.sqlit/
+
 # OS
 .DS_Store
 
@@ -34,3 +39,6 @@ aur/src/
 aur/pkg/
 aur/*.pkg.tar.*
 sqlit-notifications/
+
+# Integration test artifacts
+tests/integration/python_packages/artifacts/

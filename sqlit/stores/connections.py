@@ -8,28 +8,48 @@ from .base import CONFIG_DIR, JSONFileStore
 
 if TYPE_CHECKING:
     from ..config import ConnectionConfig
+    from ..services.credentials import CredentialsService
 
 
 class ConnectionStore(JSONFileStore):
     """Store for managing saved database connections.
 
-    Connections are stored as a JSON array in ~/.sqlit/connections.json
+    Connections are stored as a JSON array in ~/.sqlit/connections.json.
+    Passwords are stored separately in the OS keyring via CredentialsService.
     """
 
-    _instance: "ConnectionStore | None" = None
+    _instance: ConnectionStore | None = None
 
-    def __init__(self):
+    def __init__(self, credentials_service: CredentialsService | None = None) -> None:
         super().__init__(CONFIG_DIR / "connections.json")
+        self._credentials_service = credentials_service
+
+    @property
+    def credentials_service(self) -> CredentialsService:
+        """Get the credentials service (lazy-loaded)."""
+        if self._credentials_service is None:
+            from ..services.credentials import get_credentials_service
+
+            return get_credentials_service()
+        return self._credentials_service
 
     @classmethod
-    def get_instance(cls) -> "ConnectionStore":
+    def get_instance(cls) -> ConnectionStore:
         """Get the singleton instance."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
-    def load_all(self) -> list["ConnectionConfig"]:
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Reset the singleton instance (useful for testing)."""
+        cls._instance = None
+
+    def load_all(self, load_credentials: bool = True) -> list[ConnectionConfig]:
         """Load all saved connections.
+
+        Connections are loaded from JSON, and passwords are retrieved
+        from the credentials service (OS keyring).
 
         Returns:
             List of ConnectionConfig objects, or empty list if none exist.
@@ -40,19 +60,89 @@ class ConnectionStore(JSONFileStore):
         if data is None:
             return []
         try:
-            return [ConnectionConfig(**conn) for conn in data]
+            migrated = []
+            for conn in data:
+                if isinstance(conn, dict) and "host" in conn and "server" not in conn:
+                    conn = {**conn, "server": conn.get("host", "")}
+                    conn.pop("host", None)
+                migrated.append(conn)
+
+            configs = []
+            for conn in migrated:
+                config = ConnectionConfig(**conn)
+                if load_credentials:
+                    # Retrieve passwords from credentials service
+                    self._load_credentials(config)
+                configs.append(config)
+            return configs
         except (TypeError, KeyError):
             return []
 
-    def save_all(self, connections: list["ConnectionConfig"]) -> None:
+    def _load_credentials(self, config: ConnectionConfig) -> None:
+        """Load credentials from the credentials service into config.
+
+        Args:
+            config: ConnectionConfig to populate with credentials.
+        """
+        if config.password is None:
+            password = self.credentials_service.get_password(config.name)
+            if password is not None:
+                config.password = password
+
+        if config.ssh_password is None:
+            ssh_password = self.credentials_service.get_ssh_password(config.name)
+            if ssh_password is not None:
+                config.ssh_password = ssh_password
+
+    def _save_credentials(self, config: ConnectionConfig) -> None:
+        """Save credentials from config to the credentials service.
+
+        Args:
+            config: ConnectionConfig containing credentials to save.
+
+        Note: Empty string "" is a valid password (e.g., CockroachDB insecure mode).
+              Only None means "delete/no password stored".
+        """
+        if config.password is not None:
+            self.credentials_service.set_password(config.name, config.password)
+        else:
+            self.credentials_service.delete_password(config.name)
+
+        if config.ssh_password is not None:
+            self.credentials_service.set_ssh_password(config.name, config.ssh_password)
+        else:
+            self.credentials_service.delete_ssh_password(config.name)
+
+    def _config_to_dict_without_passwords(self, config: ConnectionConfig) -> dict:
+        """Convert config to dict without password fields.
+
+        Args:
+            config: ConnectionConfig to convert.
+
+        Returns:
+            Dict representation with password fields set to None.
+            None indicates "load from credentials service on next load".
+        """
+        data = vars(config).copy()
+        data["password"] = None
+        data["ssh_password"] = None
+        return data
+
+    def save_all(self, connections: list[ConnectionConfig]) -> None:
         """Save all connections.
+
+        Passwords are stored in the credentials service (OS keyring),
+        not in the JSON file.
 
         Args:
             connections: List of ConnectionConfig objects to save.
         """
-        self._write_json([vars(c) for c in connections])
+        for config in connections:
+            self._save_credentials(config)
 
-    def get_by_name(self, name: str) -> "ConnectionConfig | None":
+        self._write_json([self._config_to_dict_without_passwords(c) for c in connections])
+
+    def get_by_name(self, name: str) -> ConnectionConfig | None:
         """Get a connection by name.
 
         Args:
@@ -66,7 +156,7 @@ class ConnectionStore(JSONFileStore):
                 return conn
         return None
 
-    def add(self, connection: "ConnectionConfig") -> None:
+    def add(self, connection: ConnectionConfig) -> None:
         """Add a new connection.
 
         Args:
@@ -81,7 +171,7 @@ class ConnectionStore(JSONFileStore):
         connections.append(connection)
         self.save_all(connections)
 
-    def update(self, connection: "ConnectionConfig") -> None:
+    def update(self, connection: ConnectionConfig) -> None:
         """Update an existing connection.
 
         Args:
@@ -101,6 +191,8 @@ class ConnectionStore(JSONFileStore):
     def delete(self, name: str) -> bool:
         """Delete a connection by name.
 
+        Also deletes associated credentials from the keyring.
+
         Args:
             name: Connection name to delete.
 
@@ -111,6 +203,8 @@ class ConnectionStore(JSONFileStore):
         original_count = len(connections)
         connections = [c for c in connections if c.name != name]
         if len(connections) < original_count:
+            # Delete credentials from keyring
+            self.credentials_service.delete_all_for_connection(name)
             self.save_all(connections)
             return True
         return False
@@ -124,15 +218,14 @@ class ConnectionStore(JSONFileStore):
         return [c.name for c in self.load_all()]
 
 
-# Module-level convenience functions for backward compatibility
 _store = ConnectionStore()
 
 
-def load_connections() -> list["ConnectionConfig"]:
+def load_connections(load_credentials: bool = True) -> list[ConnectionConfig]:
     """Load saved connections from config file."""
-    return _store.load_all()
+    return _store.load_all(load_credentials=load_credentials)
 
 
-def save_connections(connections: list["ConnectionConfig"]) -> None:
+def save_connections(connections: list[ConnectionConfig]) -> None:
     """Save connections to config file."""
     _store.save_all(connections)

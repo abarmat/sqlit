@@ -6,15 +6,14 @@ from typing import TYPE_CHECKING, Any
 
 from rich.markup import escape as escape_markup
 from textual.timer import Timer
-from textual.widgets import DataTable, TextArea
 from textual.worker import Worker
 
-if TYPE_CHECKING:
-    from ...config import ConnectionConfig
-    from ...services import CancellableQuery, QueryService
-    from ...widgets import VimMode
+from ..protocols import AppProtocol
+from ...utils import format_duration_ms
 
-# Spinner frames for loading animation
+if TYPE_CHECKING:
+    from ...services import QueryService
+
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 
@@ -27,33 +26,44 @@ class QueryMixin:
             Defaults to a new QueryService() when None.
     """
 
-    # These attributes are defined in the main app class
-    current_connection: Any
-    current_config: "ConnectionConfig | None"
-    current_adapter: Any
-    vim_mode: "VimMode"
-    _last_result_columns: list[str]
-    _last_result_rows: list[tuple]
-    _last_result_row_count: int
-    _query_worker: Worker | None
-    _query_executing: bool
-    _query_start_time: float
-    _spinner_index: int
-    _spinner_timer: Timer | None
-    _cancellable_query: "CancellableQuery | None"
+    _query_service: QueryService | None = None
 
-    # DI seam for testing - set to override query service
-    _query_service: "QueryService | None" = None
+    _query_worker: Worker[Any] | None = None
+    _schema_worker: Worker[Any] | None = None
+    _cancellable_query: Any | None = None
+    _spinner_timer: Timer | None = None
+    _query_cursor_cache: dict[str, tuple[int, int]] | None = None  # query text -> cursor (row, col)
 
-    def action_execute_query(self) -> None:
+    def action_execute_query(self: AppProtocol) -> None:
         """Execute the current query."""
         self._execute_query_common(keep_insert_mode=False)
 
-    def action_execute_query_insert(self) -> None:
+    def action_execute_query_insert(self: AppProtocol) -> None:
         """Execute query in INSERT mode without leaving it."""
         self._execute_query_common(keep_insert_mode=True)
 
-    def _execute_query_common(self, keep_insert_mode: bool) -> None:
+    def action_copy_query(self: AppProtocol) -> None:
+        """Copy the current query to clipboard."""
+        from ...widgets import flash_widget
+
+        query = self.query_input.text.strip()
+        if not query:
+            self.notify("Query is empty", severity="warning")
+            return
+        self._copy_text(query)
+        flash_widget(self.query_input)
+
+    def action_copy_context(self: AppProtocol) -> None:
+        """Copy based on current focus (query or results)."""
+        if self.query_input.has_focus:
+            self.action_copy_query()
+            return
+        if self.results_table.has_focus:
+            self.action_copy_cell()
+            return
+        self.notify("Nothing to copy", severity="warning")
+
+    def _execute_query_common(self: AppProtocol, keep_insert_mode: bool) -> None:
         """Common query execution logic."""
         if not self.current_connection or not self.current_adapter:
             self.notify("Connect to a server to execute queries", severity="warning")
@@ -65,25 +75,18 @@ class QueryMixin:
             self.notify("No query to execute", severity="warning")
             return
 
-        # Cancel any existing query worker
         if hasattr(self, "_query_worker") and self._query_worker is not None:
             self._query_worker.cancel()
 
-        self.results_table.clear(columns=True)
-        self.results_table.add_column("Status")
-        self.results_table.add_row("Executing query...")
-
-        # Start spinner animation
         self._start_query_spinner()
 
-        # Run query in background thread
         self._query_worker = self.run_worker(
             self._run_query_async(query, keep_insert_mode),
             name="query_execution",
             exclusive=True,
         )
 
-    def _start_query_spinner(self) -> None:
+    def _start_query_spinner(self: AppProtocol) -> None:
         """Start the query execution spinner animation."""
         import time
 
@@ -91,12 +94,11 @@ class QueryMixin:
         self._query_start_time = time.perf_counter()
         self._spinner_index = 0
         self._update_status_bar()
-        # Start timer to animate spinner
         if hasattr(self, "_spinner_timer") and self._spinner_timer is not None:
             self._spinner_timer.stop()
-        self._spinner_timer = self.set_interval(0.1, self._animate_spinner)
+        self._spinner_timer = self.set_interval(1 / 30, self._animate_spinner)  # 30fps
 
-    def _stop_query_spinner(self) -> None:
+    def _stop_query_spinner(self: AppProtocol) -> None:
         """Stop the query execution spinner animation."""
         self._query_executing = False
         if hasattr(self, "_spinner_timer") and self._spinner_timer is not None:
@@ -104,14 +106,14 @@ class QueryMixin:
             self._spinner_timer = None
         self._update_status_bar()
 
-    def _animate_spinner(self) -> None:
+    def _animate_spinner(self: AppProtocol) -> None:
         """Update spinner animation frame."""
         if not self._query_executing:
             return
         self._spinner_index = (self._spinner_index + 1) % len(SPINNER_FRAMES)
         self._update_status_bar()
 
-    async def _run_query_async(self, query: str, keep_insert_mode: bool) -> None:
+    async def _run_query_async(self: AppProtocol, query: str, keep_insert_mode: bool) -> None:
         """Run query asynchronously using a cancellable dedicated connection."""
         import asyncio
         import time
@@ -126,7 +128,7 @@ class QueryMixin:
             self._stop_query_spinner()
             return
 
-        # Create cancellable query with dedicated connection
+        # Dedicated connection enables cancellation by closing it.
         cancellable = CancellableQuery(
             sql=query,
             config=config,
@@ -134,11 +136,9 @@ class QueryMixin:
         )
         self._cancellable_query = cancellable
 
-        # Use injected service or default (for history saving)
         service = self._query_service or QueryService()
 
         try:
-            # Execute on dedicated connection (cancellable via connection close)
             max_fetch_rows = 10000
 
             start_time = time.perf_counter()
@@ -148,14 +148,10 @@ class QueryMixin:
             )
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-            # Save to history after successful execution
             service._save_to_history(config.name, query)
 
-            # Update UI (we're back on main thread after await)
             if isinstance(result, QueryResult):
-                self._display_query_results(
-                    result.columns, result.rows, result.row_count, result.truncated, elapsed_ms
-                )
+                self._display_query_results(result.columns, result.rows, result.row_count, result.truncated, elapsed_ms)
             else:
                 self._display_non_query_result(result.rows_affected, elapsed_ms)
 
@@ -163,22 +159,19 @@ class QueryMixin:
                 self._restore_insert_mode()
 
         except RuntimeError as e:
-            # Query was cancelled
             if "cancelled" in str(e).lower():
                 pass  # Already handled by action_cancel_query
             else:
                 self._display_query_error(str(e))
         except Exception as e:
-            # Don't show error if query was cancelled
             if not cancellable.is_cancelled:
                 self._display_query_error(str(e))
         finally:
             self._cancellable_query = None
-            # Always stop the spinner when done
             self._stop_query_spinner()
 
     def _display_query_results(
-        self, columns: list[str], rows: list[tuple], row_count: int, truncated: bool, elapsed_ms: float
+        self: AppProtocol, columns: list[str], rows: list[tuple], row_count: int, truncated: bool, elapsed_ms: float
     ) -> None:
         """Display query results in the results table (called on main thread)."""
         self._last_result_columns = columns
@@ -186,42 +179,45 @@ class QueryMixin:
         self._last_result_row_count = row_count
 
         self.results_table.clear(columns=True)
+        self.results_table.show_header = True
         self.results_table.add_columns(*columns)
 
         for row in rows[:1000]:
             str_row = tuple(escape_markup(str(v)) if v is not None else "NULL" for v in row)
             self.results_table.add_row(*str_row)
 
-        time_str = f"{elapsed_ms:.0f}ms" if elapsed_ms >= 1 else f"{elapsed_ms:.2f}ms"
+        time_str = format_duration_ms(elapsed_ms)
         if truncated:
             self.notify(f"Query returned {row_count}+ rows in {time_str} (truncated)", severity="warning")
         else:
             self.notify(f"Query returned {row_count} rows in {time_str}")
 
-    def _display_non_query_result(self, affected: int, elapsed_ms: float) -> None:
+    def _display_non_query_result(self: AppProtocol, affected: int, elapsed_ms: float) -> None:
         """Display non-query result (called on main thread)."""
         self._last_result_columns = ["Result"]
         self._last_result_rows = [(f"{affected} row(s) affected",)]
         self._last_result_row_count = 1
 
         self.results_table.clear(columns=True)
+        self.results_table.show_header = True
         self.results_table.add_column("Result")
         self.results_table.add_row(f"{affected} row(s) affected")
-        time_str = f"{elapsed_ms:.0f}ms" if elapsed_ms >= 1 else f"{elapsed_ms:.2f}ms"
+        time_str = format_duration_ms(elapsed_ms)
         self.notify(f"Query executed: {affected} row(s) affected in {time_str}")
 
-    def _display_query_error(self, error_message: str) -> None:
+    def _display_query_error(self: AppProtocol, error_message: str) -> None:
         """Display query error (called on main thread)."""
         self._last_result_columns = ["Error"]
         self._last_result_rows = [(error_message,)]
         self._last_result_row_count = 1
 
         self.results_table.clear(columns=True)
+        self.results_table.show_header = True
         self.results_table.add_column("Error")
         self.results_table.add_row(escape_markup(error_message))
         self.notify(f"Query error: {error_message}", severity="error")
 
-    def _restore_insert_mode(self) -> None:
+    def _restore_insert_mode(self: AppProtocol) -> None:
         """Restore INSERT mode after query execution (called on main thread)."""
         from ...widgets import VimMode
 
@@ -231,31 +227,29 @@ class QueryMixin:
         self._update_footer_bindings()
         self._update_status_bar()
 
-    def action_cancel_query(self) -> None:
+    def action_cancel_query(self: AppProtocol) -> None:
         """Cancel the currently running query."""
         if not getattr(self, "_query_executing", False):
             self.notify("No query running")
             return
 
-        # Cancel the cancellable query (closes dedicated connection)
         if hasattr(self, "_cancellable_query") and self._cancellable_query is not None:
             self._cancellable_query.cancel()
 
-        # Also cancel the worker
         if hasattr(self, "_query_worker") and self._query_worker is not None:
             self._query_worker.cancel()
             self._query_worker = None
 
         self._stop_query_spinner()
 
-        # Update results table to show cancelled state
         self.results_table.clear(columns=True)
+        self.results_table.show_header = True
         self.results_table.add_column("Status")
         self.results_table.add_row("Query cancelled")
 
         self.notify("Query cancelled", severity="warning")
 
-    def action_cancel_operation(self) -> None:
+    def action_cancel_operation(self: AppProtocol) -> None:
         """Cancel any running operation (query or schema indexing)."""
         cancelled = False
 
@@ -272,6 +266,7 @@ class QueryMixin:
 
             # Update results table to show cancelled state
             self.results_table.clear(columns=True)
+            self.results_table.show_header = True
             self.results_table.add_column("Status")
             self.results_table.add_row("Query cancelled")
             cancelled = True
@@ -289,19 +284,20 @@ class QueryMixin:
         else:
             self.notify("No operation running")
 
-    def action_clear_query(self) -> None:
+    def action_clear_query(self: AppProtocol) -> None:
         """Clear the query input."""
         self.query_input.text = ""
 
-    def action_new_query(self) -> None:
+    def action_new_query(self: AppProtocol) -> None:
         """Start a new query (clear input and results)."""
         self.query_input.text = ""
         self.results_table.clear(columns=True)
+        self.results_table.show_header = False
 
-    def action_show_history(self) -> None:
+    def action_show_history(self: AppProtocol) -> None:
         """Show query history for the current connection."""
         if not self.current_config:
-            self.notify("Not connected to a database", severity="warning")
+            self.notify("Not connected", severity="warning")
             return
 
         from ...config import load_query_history
@@ -313,20 +309,42 @@ class QueryMixin:
             self._handle_history_result,
         )
 
-    def _handle_history_result(self, result) -> None:
+    def _handle_history_result(self: AppProtocol, result: Any) -> None:
         """Handle the result from the history screen."""
         if result is None:
             return
 
         action, data = result
         if action == "select":
+            # Initialize cursor cache if needed
+            if self._query_cursor_cache is None:
+                self._query_cursor_cache = {}
+
+            # Save current query's cursor position before switching
+            current_query = self.query_input.text
+            if current_query:
+                self._query_cursor_cache[current_query] = self.query_input.cursor_location
+
+            # Set new query text
             self.query_input.text = data
+
+            # Restore cursor position if we have it cached, otherwise go to end
+            if data in self._query_cursor_cache:
+                self.query_input.cursor_location = self._query_cursor_cache[data]
+            else:
+                # Move cursor to end of query
+                lines = data.split("\n")
+                last_line = len(lines) - 1
+                last_col = len(lines[-1]) if lines else 0
+                self.query_input.cursor_location = (last_line, last_col)
         elif action == "delete":
             self._delete_history_entry(data)
             self.action_show_history()
 
-    def _delete_history_entry(self, timestamp: str) -> None:
+    def _delete_history_entry(self: AppProtocol, timestamp: str) -> None:
         """Delete a specific history entry by timestamp."""
         from ...config import delete_query_from_history
 
+        if not self.current_config:
+            return
         delete_query_from_history(self.current_config.name, timestamp)

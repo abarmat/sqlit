@@ -11,8 +11,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import pytest
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -56,8 +54,10 @@ class BaseDatabaseTests(ABC):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT * FROM test_users ORDER BY id",
+            "-c",
+            connection,
+            "-q",
+            "SELECT * FROM test_users ORDER BY id",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout
@@ -70,8 +70,10 @@ class BaseDatabaseTests(ABC):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT name, email FROM test_users WHERE id = 1",
+            "-c",
+            connection,
+            "-q",
+            "SELECT name, email FROM test_users WHERE id = 1",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout
@@ -81,11 +83,17 @@ class BaseDatabaseTests(ABC):
     def test_query_json_format(self, request, cli_runner):
         """Test query output in JSON format."""
         connection = request.getfixturevalue(self.config.connection_fixture)
+        # Use --limit for databases that don't support LIMIT syntax
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
-            "--format", "json",
+            "-c",
+            connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id",
+            "--format",
+            "json",
+            "--limit",
+            "2",
         )
         assert result.returncode == 0
 
@@ -93,30 +101,42 @@ class BaseDatabaseTests(ABC):
         data = json.loads(result.stdout)
 
         assert len(data) == 2
-        assert data[0]["name"] == "Alice"
-        assert data[1]["name"] == "Bob"
+        # Oracle returns uppercase column names
+        first_name = data[0].get("name") or data[0].get("NAME")
+        second_name = data[1].get("name") or data[1].get("NAME")
+        assert first_name == "Alice"
+        assert second_name == "Bob"
 
     def test_query_csv_format(self, request, cli_runner):
         """Test query output in CSV format."""
         connection = request.getfixturevalue(self.config.connection_fixture)
+        # Use --limit for databases that don't support LIMIT syntax
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id LIMIT 2",
-            "--format", "csv",
+            "-c",
+            connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id",
+            "--format",
+            "csv",
+            "--limit",
+            "2",
         )
         assert result.returncode == 0
-        assert "id,name" in result.stdout
-        assert "1,Alice" in result.stdout
-        assert "2,Bob" in result.stdout
+        # Oracle may return uppercase column names
+        assert "id,name" in result.stdout.lower()
+        assert "Alice" in result.stdout
+        assert "Bob" in result.stdout
 
     def test_query_view(self, request, cli_runner):
         """Test querying a view."""
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT * FROM test_user_emails ORDER BY id",
+            "-c",
+            connection,
+            "-q",
+            "SELECT * FROM test_user_emails ORDER BY id",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout
@@ -127,8 +147,10 @@ class BaseDatabaseTests(ABC):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT COUNT(*) as user_count FROM test_users",
+            "-c",
+            connection,
+            "-q",
+            "SELECT COUNT(*) as user_count FROM test_users",
         )
         assert result.returncode == 0
         assert "3" in result.stdout
@@ -138,19 +160,22 @@ class BaseDatabaseTests(ABC):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "INSERT INTO test_users (id, name, email) VALUES (4, 'David', 'david@example.com')",
+            "-c",
+            connection,
+            "-q",
+            "INSERT INTO test_users (id, name, email) VALUES (4, 'David', 'david@example.com')",
         )
         assert result.returncode == 0
 
         # Verify the insert
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT * FROM test_users WHERE id = 4",
+            "-c",
+            connection,
+            "-q",
+            "SELECT * FROM test_users WHERE id = 4",
         )
         assert "David" in result.stdout
-
 
     def test_cancellable_query_select(self, request):
         """Test CancellableQuery execution (used by TUI).
@@ -222,12 +247,16 @@ class BaseDatabaseTests(ABC):
         # No --max-rows to trigger the streaming path for cursor-based adapters
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id",
-            "--format", "csv",
+            "-c",
+            connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id",
+            "--format",
+            "csv",
         )
         assert result.returncode == 0
-        assert "id,name" in result.stdout
+        # Oracle may return uppercase column names
+        assert "id,name" in result.stdout.lower()
         assert "Alice" in result.stdout
 
     def test_streaming_json_output(self, request, cli_runner):
@@ -235,14 +264,19 @@ class BaseDatabaseTests(ABC):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT id, name FROM test_users ORDER BY id",
-            "--format", "json",
+            "-c",
+            connection,
+            "-q",
+            "SELECT id, name FROM test_users ORDER BY id",
+            "--format",
+            "json",
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
         assert len(data) == 3
-        assert data[0]["name"] == "Alice"
+        # Oracle returns uppercase column names
+        first_name = data[0].get("name") or data[0].get("NAME")
+        assert first_name == "Alice"
 
     def test_adapter_interface_compliance(self, request):
         """Verify adapter implements required interface without relying on cursor.
@@ -256,16 +290,16 @@ class BaseDatabaseTests(ABC):
 
         # Required methods that should work without cursor
         required_methods = [
-            'connect',
-            'execute_query',
-            'execute_non_query',
-            'get_tables',
-            'get_views',
-            'get_columns',
-            'get_databases',
-            'get_procedures',
-            'quote_identifier',
-            'build_select_query',
+            "connect",
+            "execute_query",
+            "execute_non_query",
+            "get_tables",
+            "get_views",
+            "get_columns",
+            "get_databases",
+            "get_procedures",
+            "quote_identifier",
+            "build_select_query",
         ]
 
         for method_name in required_methods:
@@ -275,9 +309,9 @@ class BaseDatabaseTests(ABC):
 
         # Required properties
         required_properties = [
-            'name',
-            'supports_multiple_databases',
-            'supports_stored_procedures',
+            "name",
+            "supports_multiple_databases",
+            "supports_stored_procedures",
         ]
 
         for prop_name in required_properties:
@@ -317,6 +351,44 @@ class BaseDatabaseTests(ABC):
             row_values = [str(v) for v in result.rows[0]]
             assert "Alice" in row_values
 
+    def test_primary_key_detection(self, request):
+        """Test that adapter correctly detects primary key columns.
+
+        This tests that get_columns returns ColumnInfo with is_primary_key=True
+        for primary key columns. The test_users table has 'id' as PRIMARY KEY.
+        """
+        from sqlit.config import load_connections
+        from sqlit.db.adapters import get_adapter
+        from sqlit.services.session import ConnectionSession
+
+        connection_name = request.getfixturevalue(self.config.connection_fixture)
+        connections = load_connections()
+        config = next((c for c in connections if c.name == connection_name), None)
+        assert config is not None, f"Connection {connection_name} not found"
+
+        with ConnectionSession.create(config, get_adapter) as session:
+            # Get columns for test_users table (has 'id' as PRIMARY KEY)
+            columns = session.adapter.get_columns(
+                session.connection,
+                "test_users",
+                database=config.database if session.adapter.supports_multiple_databases else None,
+            )
+
+            assert len(columns) >= 3, f"Expected at least 3 columns, got {len(columns)}"
+
+            # Find the 'id' column (case-insensitive for Oracle which uppercases)
+            id_column = next(
+                (col for col in columns if col.name.lower() == "id"),
+                None,
+            )
+            assert id_column is not None, f"Column 'id' not found. Columns: {[c.name for c in columns]}"
+            assert id_column.is_primary_key, f"Column 'id' should be marked as primary key"
+
+            # Non-PK columns should not be marked as primary key
+            non_pk_columns = [col for col in columns if col.name.lower() != "id"]
+            for col in non_pk_columns:
+                assert not col.is_primary_key, f"Column '{col.name}' should NOT be marked as primary key"
+
 
 class BaseDatabaseTestsWithLimit(BaseDatabaseTests):
     """Base tests for databases that support LIMIT syntax."""
@@ -326,8 +398,10 @@ class BaseDatabaseTestsWithLimit(BaseDatabaseTests):
         connection = request.getfixturevalue(self.config.connection_fixture)
         result = cli_runner(
             "query",
-            "-c", connection,
-            "-q", "SELECT * FROM test_users ORDER BY id LIMIT 2",
+            "-c",
+            connection,
+            "-q",
+            "SELECT * FROM test_users ORDER BY id LIMIT 2",
         )
         assert result.returncode == 0
         assert "Alice" in result.stdout

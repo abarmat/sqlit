@@ -11,21 +11,24 @@ adding or overriding specific behaviors.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
-from .ui.tree_nodes import ConnectionNode, DatabaseNode, FolderNode, SchemaNode, TableNode, ViewNode
+from .ui.tree_nodes import (
+    ConnectionNode,
+    DatabaseNode,
+    FolderNode,
+    SchemaNode,
+    TableNode,
+    ViewNode,
+)
 
 if TYPE_CHECKING:
     from .app import SSMSTUI
 
-
-# ============================================================
-# Leader Commands Definition
-# ============================================================
-
-# Guard functions for leader commands (resolved by name from keymap)
+# Guards are referenced by name from the keymap.
 LEADER_GUARDS: dict[str, Callable[[SSMSTUI], bool]] = {
     "has_connection": lambda app: app.current_connection is not None,
     "query_executing": lambda app: getattr(app, "_query_executing", False),
@@ -86,14 +89,11 @@ def get_leader_binding_actions() -> set[str]:
     return {cmd.binding_action for cmd in get_leader_commands()}
 
 
-def get_leader_bindings():
+def get_leader_bindings() -> tuple:
     """Generate Textual Bindings from leader commands."""
     from textual.binding import Binding
 
-    return tuple(
-        Binding(cmd.key, cmd.binding_action, show=False)
-        for cmd in get_leader_commands()
-    )
+    return tuple(Binding(cmd.key, cmd.binding_action, show=False) for cmd in get_leader_commands())
 
 
 class ActionResult(Enum):
@@ -127,10 +127,8 @@ class ActionSpec:
     """Specification for an action."""
 
     guard: Callable[[SSMSTUI], bool] | None = None
-    # Optional display info - if provided, action shows in footer
     display_key: str | None = None
     display_label: str | None = None
-    # Optional help text - if provided, action shows in help
     help_key: str | None = None
     help_description: str | None = None
 
@@ -162,16 +160,13 @@ class ActionSpec:
 class State(ABC):
     """Base class for hierarchical states."""
 
-    # Override in subclasses to set the help category for this state's actions
     help_category: str | None = None
 
     def __init__(self, parent: State | None = None):
         self.parent = parent
         self._actions: dict[str, ActionSpec] = {}
         self._forbidden: set[str] = set()
-        # Bindings to display (in order) when this state is active
         self._display_order: list[str] = []
-        # Right-side bindings (like leader key)
         self._right_bindings: list[str] = []
         self._setup_actions()
 
@@ -231,26 +226,21 @@ class State(ABC):
 
     def check_action(self, app: SSMSTUI, action_name: str) -> ActionResult:
         """Check if action is allowed in this state or ancestors."""
-        # Explicit forbid takes precedence
         if action_name in self._forbidden:
             return ActionResult.FORBIDDEN
 
-        # Check if this state handles the action
         if action_name in self._actions:
             spec = self._actions[action_name]
             if spec.is_allowed(app):
                 return ActionResult.ALLOWED
             return ActionResult.FORBIDDEN
 
-        # Delegate to parent state
         if self.parent:
             return self.parent.check_action(app, action_name)
 
         return ActionResult.UNHANDLED
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         """Get bindings to display in footer (left, right).
 
         Returns bindings from this state and ancestors, with this state's
@@ -260,7 +250,6 @@ class State(ABC):
         right: list[DisplayBinding] = []
         seen: set[str] = set()
 
-        # Collect from this state first
         for action_name in self._display_order:
             if action_name in seen:
                 continue
@@ -281,7 +270,6 @@ class State(ABC):
                     right.append(binding)
                     seen.add(action_name)
 
-        # Collect from parent (but don't duplicate)
         if self.parent:
             parent_left, parent_right = self.parent.get_display_bindings(app)
             for binding in parent_left:
@@ -301,29 +289,18 @@ class State(ABC):
         pass
 
 
-# ============================================================
-# Root State
-# ============================================================
-
-
 class RootState(State):
     """Root state - minimal actions available everywhere."""
 
     help_category = "General"
 
     def _setup_actions(self) -> None:
-        # Actions available everywhere
         self.allows("quit", help="Quit", help_key="^q")
         self.allows("show_help", help="Show this help", help_key="?")
         self.allows("leader_key", help="Commands menu", help_key="<space>")
 
     def is_active(self, app: SSMSTUI) -> bool:
         return True
-
-
-# ============================================================
-# Modal Active State
-# ============================================================
 
 
 class ModalActiveState(State):
@@ -335,20 +312,14 @@ class ModalActiveState(State):
     """
 
     def _setup_actions(self) -> None:
-        # Modal screens handle their own bindings
         pass
 
     def check_action(self, app: SSMSTUI, action_name: str) -> ActionResult:
-        # Let critical actions through
         if action_name in ("quit",):
             return ActionResult.ALLOWED
-        # Block everything else - modal handles its own bindings
         return ActionResult.FORBIDDEN
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
-        # Modal screens provide their own footer/UI
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         return [], []
 
     def is_active(self, app: SSMSTUI) -> bool:
@@ -357,40 +328,50 @@ class ModalActiveState(State):
         return any(isinstance(screen, ModalScreen) for screen in app.screen_stack[1:])
 
 
-# ============================================================
-# Main Screen State (no modal active)
-# ============================================================
-
-
 class MainScreenState(State):
     """Base state for main screen (no modal active)."""
 
     help_category = "Navigation"
 
     def _setup_actions(self) -> None:
-        # Navigation (shown in Navigation category)
         self.allows("focus_explorer", help="Focus Explorer", help_key="e")
         self.allows("focus_query", help="Focus Query", help_key="q")
         self.allows("focus_results", help="Focus Results", help_key="r")
         self.allows("toggle_fullscreen", help="Toggle fullscreen", help_key="f")
-        # General actions (not shown in Navigation, will be in General)
         self.allows("show_help")
         self.allows("change_theme")
-        self.allows("cancel_operation")  # ctrl+c to cancel running operations
-        # Leader key shown on right side
         self.allows("leader_key", key="<space>", label="Commands", right=True)
 
     def is_active(self, app: SSMSTUI) -> bool:
         from textual.screen import ModalScreen
 
-        return not any(
-            isinstance(screen, ModalScreen) for screen in app.screen_stack[1:]
-        )
+        if any(isinstance(screen, ModalScreen) for screen in app.screen_stack[1:]):
+            return False
+        # Defer to QueryExecutingState if a query is running
+        return not getattr(app, "_query_executing", False)
 
 
-# ============================================================
-# Leader Pending State
-# ============================================================
+class QueryExecutingState(State):
+    """State when a query is being executed."""
+
+    help_category = "Query"
+
+    def _setup_actions(self) -> None:
+        self.allows("cancel_operation", key="^z", label="Cancel", help="Cancel query")
+        self.allows("quit")
+
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+        left: list[DisplayBinding] = [
+            DisplayBinding(key="^z", label="Cancel", action="cancel_operation"),
+        ]
+        return left, []
+
+    def is_active(self, app: SSMSTUI) -> bool:
+        from textual.screen import ModalScreen
+
+        if any(isinstance(screen, ModalScreen) for screen in app.screen_stack[1:]):
+            return False
+        return getattr(app, "_query_executing", False)
 
 
 class LeaderPendingState(State):
@@ -400,12 +381,9 @@ class LeaderPendingState(State):
     """
 
     def _setup_actions(self) -> None:
-        # Leader actions are checked dynamically in check_action
-        # because the keymap may be swapped for testing
         pass
 
     def check_action(self, app: SSMSTUI, action_name: str) -> ActionResult:
-        # Check if this is a leader binding action (leader_quit, leader_toggle_explorer, etc.)
         leader_binding_actions = get_leader_binding_actions()
         if action_name in leader_binding_actions:
             leader_commands = get_leader_commands()
@@ -414,26 +392,51 @@ class LeaderPendingState(State):
                 return ActionResult.ALLOWED
             return ActionResult.FORBIDDEN
 
-        # leader_key passes through during pending (to show menu)
         if action_name == "leader_key":
             return ActionResult.ALLOWED
 
         return ActionResult.FORBIDDEN
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
-        # During leader pending, we show a minimal indicator
-        # The actual menu will appear via LeaderMenuScreen
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         return [], [DisplayBinding(key="...", label="Waiting", action="leader_pending")]
 
     def is_active(self, app: SSMSTUI) -> bool:
         return getattr(app, "_leader_pending", False)
 
 
-# ============================================================
-# Tree States
-# ============================================================
+class TreeFilterActiveState(State):
+    """State when tree filter is active."""
+
+    help_category = "Explorer"
+
+    def _setup_actions(self) -> None:
+        self.allows("tree_filter_close", help="Close filter", help_key="esc")
+        self.allows("tree_filter_accept", help="Select item", help_key="enter")
+        self.allows("tree_filter_next", help="Next match", help_key="n/j")
+        self.allows("tree_filter_prev", help="Previous match", help_key="N/k")
+        self.allows("quit")
+        self.forbids(
+            "focus_explorer",
+            "focus_query",
+            "focus_results",
+            "leader_key",
+            "new_connection",
+            "tree_filter",
+        )
+
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+        left: list[DisplayBinding] = [
+            DisplayBinding(key="esc", label="Close", action="tree_filter_close"),
+            DisplayBinding(key="enter", label="Select", action="tree_filter_accept"),
+            DisplayBinding(key="n/N", label="Next/Prev", action="tree_filter_next"),
+        ]
+        return left, []
+
+    def is_active(self, app: SSMSTUI) -> bool:
+        return (
+            app.object_tree.has_focus
+            and getattr(app, "_tree_filter_visible", False)
+        )
 
 
 class TreeFocusedState(State):
@@ -445,9 +448,15 @@ class TreeFocusedState(State):
         self.allows("new_connection", key="n", label="New", help="New connection")
         self.allows("refresh_tree", key="f", label="Refresh", help="Refresh tree", help_key="R/f")
         self.allows("collapse_tree", help="Collapse all", help_key="z")
+        self.allows("tree_cursor_down")  # vim j
+        self.allows("tree_cursor_up")  # vim k
+        self.allows("tree_filter", help="Filter tree", help_key="/")
 
     def is_active(self, app: SSMSTUI) -> bool:
-        return app.object_tree.has_focus
+        if not app.object_tree.has_focus:
+            return False
+        # Defer to TreeFilterActiveState if filter is visible
+        return not getattr(app, "_tree_filter_visible", False)
 
 
 class TreeOnConnectionState(State):
@@ -463,34 +472,27 @@ class TreeOnConnectionState(State):
             config = node.data.config
             if not app.current_connection:
                 return True
-            return (
-                config
-                and app.current_config
-                and config.name != app.current_config.name
-            )
+            return bool(config and app.current_config and config.name != app.current_config.name)
 
         def is_connected_to_this(app: SSMSTUI) -> bool:
             node = app.object_tree.cursor_node
             if not node or not isinstance(node.data, ConnectionNode):
                 return False
             config = node.data.config
-            return (
+            return bool(
                 app.current_connection is not None
                 and config
                 and app.current_config
                 and config.name == app.current_config.name
             )
 
-        # Show connect or disconnect based on state
         self.allows("connect_selected", can_connect, key="enter", label="Connect", help="Connect/Expand/Columns")
         self.allows("disconnect", is_connected_to_this, key="x", label="Disconnect", help="Disconnect")
         self.allows("edit_connection", key="e", label="Edit", help="Edit connection")
         self.allows("delete_connection", key="d", label="Delete", help="Delete connection")
         self.allows("duplicate_connection", key="D", label="Duplicate", help="Duplicate connection")
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         """Custom display logic for connection node."""
         left: list[DisplayBinding] = []
         seen: set[str] = set()
@@ -504,7 +506,6 @@ class TreeOnConnectionState(State):
             and config.name == app.current_config.name
         )
 
-        # Show either Connect or Disconnect, not both
         if is_connected:
             left.append(DisplayBinding(key="x", label="Disconnect", action="disconnect"))
             seen.add("disconnect")
@@ -550,9 +551,7 @@ class TreeOnTableState(State):
     def _setup_actions(self) -> None:
         self.allows("select_table", key="s", label="Select TOP 100", help="Select TOP 100 (table/view)")
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         left: list[DisplayBinding] = []
         seen: set[str] = set()
 
@@ -577,7 +576,7 @@ class TreeOnTableState(State):
         if not app.object_tree.has_focus:
             return False
         node = app.object_tree.cursor_node
-        return node is not None and isinstance(node.data, (TableNode, ViewNode))
+        return node is not None and isinstance(node.data, TableNode | ViewNode)
 
 
 class TreeOnFolderState(State):
@@ -586,9 +585,7 @@ class TreeOnFolderState(State):
     def _setup_actions(self) -> None:
         pass  # Just inherits from parent
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         left: list[DisplayBinding] = []
         seen: set[str] = set()
 
@@ -611,12 +608,7 @@ class TreeOnFolderState(State):
         if not app.object_tree.has_focus:
             return False
         node = app.object_tree.cursor_node
-        return node is not None and isinstance(node.data, (FolderNode, DatabaseNode, SchemaNode))
-
-
-# ============================================================
-# Query States
-# ============================================================
+        return node is not None and isinstance(node.data, FolderNode | DatabaseNode | SchemaNode)
 
 
 class QueryFocusedState(State):
@@ -635,23 +627,14 @@ class QueryNormalModeState(State):
     help_category = "Query Editor (Normal)"
 
     def _setup_actions(self) -> None:
-        from .widgets import VimMode
-
         self.allows("enter_insert_mode", key="i", label="Insert Mode", help="Enter INSERT mode")
         self.allows("execute_query", key="enter", label="Execute", help="Execute query")
         self.allows("clear_query", key="d", label="Clear", help="Clear query")
         self.allows("new_query", key="n", label="New", help="New query (clear all)")
-        self.allows(
-            "show_history",
-            lambda app: app.current_config is not None,
-            key="h",
-            label="History",
-            help="Query history",
-        )
+        self.allows("copy_context", key="y", label="Copy query", help="Copy current query")
+        self.allows("show_history", key="h", label="History", help="Query history")
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         left: list[DisplayBinding] = []
         seen: set[str] = set()
 
@@ -660,8 +643,10 @@ class QueryNormalModeState(State):
         left.append(DisplayBinding(key="enter", label="Execute", action="execute_query"))
         seen.add("execute_query")
 
-        if app.current_config is not None:
-            left.append(DisplayBinding(key="h", label="History", action="show_history"))
+        left.append(DisplayBinding(key="y", label="Copy query", action="copy_context"))
+        seen.add("copy_context")
+
+        left.append(DisplayBinding(key="h", label="History", action="show_history"))
         seen.add("show_history")
 
         left.append(DisplayBinding(key="d", label="Clear", action="clear_query"))
@@ -692,7 +677,7 @@ class QueryInsertModeState(State):
 
     def _setup_actions(self) -> None:
         self.allows("exit_insert_mode", key="esc", label="Normal Mode", help="Exit to NORMAL mode")
-        self.allows("execute_query_insert", key="f5", label="Execute", help="Execute query (stay INSERT)")
+        self.allows("execute_query_insert", key="f5 | ^enter", label="Execute", help="Execute query (stay INSERT)")
         self.allows("autocomplete_accept", help="Accept autocomplete", help_key="tab")
         self.allows("quit")
         self.forbids(
@@ -703,12 +688,10 @@ class QueryInsertModeState(State):
             "show_help",
         )
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         left: list[DisplayBinding] = [
             DisplayBinding(key="esc", label="Normal Mode", action="exit_insert_mode"),
-            DisplayBinding(key="f5", label="Execute", action="execute_query_insert"),
+            DisplayBinding(key="f5 | ^enter", label="Execute", action="execute_query_insert"),
             DisplayBinding(key="tab", label="Autocomplete", action="autocomplete_accept"),
         ]
         return left, []
@@ -716,12 +699,49 @@ class QueryInsertModeState(State):
     def is_active(self, app: SSMSTUI) -> bool:
         from .widgets import VimMode
 
-        return app.query_input.has_focus and app.vim_mode == VimMode.INSERT
+        if not app.query_input.has_focus or app.vim_mode != VimMode.INSERT:
+            return False
+        # Defer to AutocompleteActiveState if autocomplete is visible
+        return not getattr(app, "_autocomplete_visible", False)
 
 
-# ============================================================
-# Results States
-# ============================================================
+class AutocompleteActiveState(State):
+    """Query editor with autocomplete dropdown visible."""
+
+    help_category = "Query Editor (Insert)"
+
+    def _setup_actions(self) -> None:
+        self.allows("autocomplete_next", help="Next suggestion", help_key="^j")
+        self.allows("autocomplete_prev", help="Previous suggestion", help_key="^k")
+        self.allows("autocomplete_accept", help="Accept autocomplete", help_key="tab")
+        self.allows("autocomplete_close", help="Close autocomplete", help_key="esc")
+        self.allows("execute_query_insert")
+        self.allows("quit")
+        self.forbids(
+            "exit_insert_mode",  # Escape closes autocomplete, not exits insert mode
+            "focus_explorer",
+            "focus_results",
+            "leader_key",
+            "new_connection",
+            "show_help",
+        )
+
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+        left: list[DisplayBinding] = [
+            DisplayBinding(key="tab", label="Accept", action="autocomplete_accept"),
+            DisplayBinding(key="^j/^k", label="Next/Prev", action="autocomplete_next"),
+            DisplayBinding(key="esc", label="Close", action="autocomplete_close"),
+        ]
+        return left, []
+
+    def is_active(self, app: SSMSTUI) -> bool:
+        from .widgets import VimMode
+
+        return (
+            app.query_input.has_focus
+            and app.vim_mode == VimMode.INSERT
+            and getattr(app, "_autocomplete_visible", False)
+        )
 
 
 class ResultsFocusedState(State):
@@ -731,13 +751,17 @@ class ResultsFocusedState(State):
 
     def _setup_actions(self) -> None:
         self.allows("view_cell", key="v", label="View cell", help="View selected cell")
-        self.allows("copy_cell", key="y", label="Copy cell", help="Copy selected cell")
+        self.allows("edit_cell", key="u", label="Update cell", help="Update cell (generate UPDATE)")
+        self.allows("copy_context", key="y", label="Copy cell", help="Copy selected cell")
         self.allows("copy_row", key="Y", label="Copy row", help="Copy selected row")
         self.allows("copy_results", key="a", label="Copy all", help="Copy all results")
+        self.allows("clear_results", key="x", label="Clear", help="Clear results")
+        self.allows("results_cursor_left")  # vim h
+        self.allows("results_cursor_down")  # vim j
+        self.allows("results_cursor_up")  # vim k
+        self.allows("results_cursor_right")  # vim l
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         left: list[DisplayBinding] = []
         seen: set[str] = set()
 
@@ -745,14 +769,16 @@ class ResultsFocusedState(State):
 
         if is_error:
             left.append(DisplayBinding(key="v", label="View error", action="view_cell"))
-            left.append(DisplayBinding(key="y", label="Copy error", action="copy_cell"))
+            left.append(DisplayBinding(key="y", label="Copy error", action="copy_context"))
         else:
             left.append(DisplayBinding(key="v", label="View cell", action="view_cell"))
-            left.append(DisplayBinding(key="y", label="Copy cell", action="copy_cell"))
+            left.append(DisplayBinding(key="u", label="Update", action="edit_cell"))
+            left.append(DisplayBinding(key="y", label="Copy cell", action="copy_context"))
             left.append(DisplayBinding(key="Y", label="Copy row", action="copy_row"))
             left.append(DisplayBinding(key="a", label="Copy all", action="copy_results"))
+        left.append(DisplayBinding(key="x", label="Clear", action="clear_results"))
 
-        seen.update(["view_cell", "copy_cell", "copy_row", "copy_results"])
+        seen.update(["view_cell", "copy_context", "copy_row", "copy_results", "clear_results"])
 
         right: list[DisplayBinding] = []
         if self.parent:
@@ -765,59 +791,54 @@ class ResultsFocusedState(State):
         return left, right
 
     def is_active(self, app: SSMSTUI) -> bool:
-        return app.results_table.has_focus
-
-
-# ============================================================
-# State Machine
-# ============================================================
+        try:
+            return app.results_table.has_focus
+        except Exception:
+            # Results table may not exist yet (Lazy loading)
+            return False
 
 
 class UIStateMachine:
     """Hierarchical state machine for UI action validation and binding display."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.root = RootState()
 
-        # Modal state (highest priority, blocks everything)
         self.modal_active = ModalActiveState(parent=self.root)
 
-        # Main screen state (parent of all non-modal states)
+        self.query_executing = QueryExecutingState(parent=self.root)
+
         self.main_screen = MainScreenState(parent=self.root)
 
-        # Leader pending (high priority within main screen)
         self.leader_pending = LeaderPendingState(parent=self.main_screen)
 
-        # Tree hierarchy
         self.tree_focused = TreeFocusedState(parent=self.main_screen)
+        self.tree_filter_active = TreeFilterActiveState(parent=self.main_screen)
         self.tree_on_connection = TreeOnConnectionState(parent=self.tree_focused)
         self.tree_on_table = TreeOnTableState(parent=self.tree_focused)
         self.tree_on_folder = TreeOnFolderState(parent=self.tree_focused)
 
-        # Query hierarchy
         self.query_focused = QueryFocusedState(parent=self.main_screen)
         self.query_normal = QueryNormalModeState(parent=self.query_focused)
         self.query_insert = QueryInsertModeState(parent=self.query_focused)
+        self.autocomplete_active = AutocompleteActiveState(parent=self.query_focused)
 
-        # Results
         self.results_focused = ResultsFocusedState(parent=self.main_screen)
 
-        # Priority order: most specific states first
         self._states = [
-            self.modal_active,  # Highest: blocks when modal open
-            self.leader_pending,  # High: blocks during leader combo
-            # Tree substates before tree parent
+            self.modal_active,
+            self.query_executing,  # Before main_screen (more specific when query running)
+            self.leader_pending,
+            self.tree_filter_active,  # Before tree_focused (more specific when filter active)
             self.tree_on_connection,
             self.tree_on_table,
             self.tree_on_folder,
             self.tree_focused,
-            # Query substates before query parent
+            self.autocomplete_active,  # Before query_insert (more specific)
             self.query_insert,
             self.query_normal,
             self.query_focused,
-            # Results
             self.results_focused,
-            # Fallbacks
             self.main_screen,
             self.root,
         ]
@@ -833,13 +854,9 @@ class UIStateMachine:
         """Check if action is allowed in current state."""
         state = self.get_active_state(app)
         result = state.check_action(app, action_name)
-        # Only explicitly ALLOWED actions are permitted
-        # UNHANDLED and FORBIDDEN both block the action
         return result == ActionResult.ALLOWED
 
-    def get_display_bindings(
-        self, app: SSMSTUI
-    ) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
+    def get_display_bindings(self, app: SSMSTUI) -> tuple[list[DisplayBinding], list[DisplayBinding]]:
         """Get bindings to display in footer for current state."""
         state = self.get_active_state(app)
         return state.get_display_bindings(app)
@@ -851,7 +868,6 @@ class UIStateMachine:
 
     def generate_help_text(self) -> str:
         """Generate help text from all states' help entries."""
-        # Collect help entries from all states
         entries_by_category: dict[str, list[HelpEntry]] = {}
 
         for state in self._states:
@@ -863,8 +879,7 @@ class UIStateMachine:
                     entries_by_category[entry.category].append(entry)
 
         entries_by_category["Commands (<space>)"] = [
-            HelpEntry(cmd.key, cmd.label, "Commands (<space>)")
-            for cmd in get_leader_commands()
+            HelpEntry(f"<space>+{cmd.key}", cmd.label, "Commands (<space>)") for cmd in get_leader_commands()
         ]
 
         category_order = [
@@ -887,7 +902,7 @@ class UIStateMachine:
 
             lines.append(f"[bold]{category}:[/]")
             for entry in entries:
-                key_display = self._format_key_for_help(entry.key).ljust(10)
+                key_display = self._format_key_for_help(entry.key).ljust(16)
                 lines.append(f"  {key_display} {entry.description}")
             lines.append("")
 
@@ -897,9 +912,33 @@ class UIStateMachine:
     def _format_key_for_help(key: str) -> str:
         """Format a key for help display, wrapping special keys in angle brackets."""
         special_keys = {
-            "enter", "space", "esc", "escape", "tab", "delete", "backspace",
-            "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
-            "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            "enter",
+            "space",
+            "esc",
+            "escape",
+            "tab",
+            "delete",
+            "backspace",
+            "up",
+            "down",
+            "left",
+            "right",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "f1",
+            "f2",
+            "f3",
+            "f4",
+            "f5",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "f11",
+            "f12",
         }
 
         if key.lower() in special_keys:

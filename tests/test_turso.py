@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from .test_database_base import BaseDatabaseTestsWithLimit, DatabaseTestConfig
 
 
@@ -29,32 +27,35 @@ class TestTursoIntegration(BaseDatabaseTestsWithLimit):
         connection_name = "test_create_turso"
 
         try:
-            # Create connection
             result = cli_runner(
-                "connection", "create",
-                "--name", connection_name,
-                "--db-type", "turso",
-                "--server", turso_db,
-                "--password", "",
+                "connections",
+                "add",
+                "turso",
+                "--name",
+                connection_name,
+                "--server",
+                turso_db,
+                "--password",
+                "",
             )
             assert result.returncode == 0
             assert "created successfully" in result.stdout
 
-            # Verify it appears in list
             result = cli_runner("connection", "list")
             assert connection_name in result.stdout
             assert "Turso" in result.stdout
 
         finally:
-            # Cleanup
             cli_runner("connection", "delete", connection_name, check=False)
 
     def test_query_turso_join(self, turso_connection, cli_runner):
         """Test JOIN query on Turso."""
         result = cli_runner(
             "query",
-            "-c", turso_connection,
-            "-q", """
+            "-c",
+            turso_connection,
+            "-q",
+            """
                 SELECT u.name, p.name as product, p.price
                 FROM test_users u
                 CROSS JOIN test_products p
@@ -69,16 +70,19 @@ class TestTursoIntegration(BaseDatabaseTestsWithLimit):
         """Test UPDATE statement on Turso."""
         result = cli_runner(
             "query",
-            "-c", turso_connection,
-            "-q", "UPDATE test_products SET stock = 200 WHERE id = 1",
+            "-c",
+            turso_connection,
+            "-q",
+            "UPDATE test_products SET stock = 200 WHERE id = 1",
         )
         assert result.returncode == 0
 
-        # Verify the update
         result = cli_runner(
             "query",
-            "-c", turso_connection,
-            "-q", "SELECT stock FROM test_products WHERE id = 1",
+            "-c",
+            turso_connection,
+            "-q",
+            "SELECT stock FROM test_products WHERE id = 1",
         )
         assert "200" in result.stdout
 
@@ -86,21 +90,22 @@ class TestTursoIntegration(BaseDatabaseTestsWithLimit):
         """Test deleting a Turso connection."""
         connection_name = "test_delete_turso"
 
-        # Create connection first
         cli_runner(
-            "connection", "create",
-            "--name", connection_name,
-            "--db-type", "turso",
-            "--server", turso_db,
-            "--password", "",
+            "connections",
+            "add",
+            "turso",
+            "--name",
+            connection_name,
+            "--server",
+            turso_db,
+            "--password",
+            "",
         )
 
-        # Delete it
         result = cli_runner("connection", "delete", connection_name)
         assert result.returncode == 0
         assert "deleted successfully" in result.stdout
 
-        # Verify it's gone
         result = cli_runner("connection", "list")
         assert connection_name not in result.stdout
 
@@ -108,8 +113,10 @@ class TestTursoIntegration(BaseDatabaseTestsWithLimit):
         """Test handling of invalid SQL query."""
         result = cli_runner(
             "query",
-            "-c", turso_connection,
-            "-q", "SELECT * FROM nonexistent_table",
+            "-c",
+            turso_connection,
+            "-q",
+            "SELECT * FROM nonexistent_table",
             check=False,
         )
         assert result.returncode != 0

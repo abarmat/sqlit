@@ -4,10 +4,13 @@ Usage:
     sqlit --mock=sqlite-demo   # Pre-configured SQLite with demo data
     sqlit --mock=empty         # Empty connections, but mock adapters available
     sqlit --mock=multi-db      # Multiple database connections
+    sqlit --mock=driver-install-success --mock-missing-drivers=postgresql --mock-install=success
+    sqlit --mock=driver-install-fail --mock-missing-drivers=mysql --mock-install=fail
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,13 +21,13 @@ from .db.adapters.base import ColumnInfo, DatabaseAdapter
 class MockConnection:
     """Mock database connection object."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.closed = False
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
 
-    def cursor(self):
+    def cursor(self) -> MockCursor:
         return MockCursor()
 
 
@@ -61,6 +64,12 @@ class MockDatabaseAdapter(DatabaseAdapter):
         query_results: dict[str, tuple[list[str], list[tuple]]] | None = None,
         default_schema: str = "",
         default_query_result: tuple[list[str], list[tuple]] | None = None,
+        connect_result: str = "success",
+        connect_error: str = "Connection failed",
+        required_fields: list[str] | None = None,
+        allowed_connections: list[dict[str, Any]] | None = None,
+        auth_error: str = "Authentication failed",
+        query_delay: float = 0.0,
     ):
         self._name = name
         self._tables = tables or []
@@ -72,6 +81,21 @@ class MockDatabaseAdapter(DatabaseAdapter):
             ["id", "name"],
             [(1, "Sample Row 1"), (2, "Sample Row 2")],
         )
+        self._connect_result = (connect_result or "success").strip().lower()
+        self._connect_error = connect_error or "Connection failed"
+        self._required_fields = required_fields or []
+        self._allowed_connections = allowed_connections or []
+        self._auth_error = auth_error or "Authentication failed"
+        # Use provided delay or fall back to environment variable
+        if query_delay > 0:
+            self._query_delay = query_delay
+        else:
+            import os
+            env_delay = os.environ.get("SQLIT_MOCK_QUERY_DELAY", "")
+            try:
+                self._query_delay = float(env_delay) if env_delay else 0.0
+            except ValueError:
+                self._query_delay = 0.0
 
     @property
     def name(self) -> str:
@@ -90,6 +114,18 @@ class MockDatabaseAdapter(DatabaseAdapter):
         return False
 
     def connect(self, config: ConnectionConfig) -> Any:
+        if self._connect_result not in {"success", "ok", "pass"}:
+            raise Exception(self._connect_error)
+
+        if self._required_fields:
+            missing = [field for field in self._required_fields if not getattr(config, field, None)]
+            if missing:
+                message = self._connect_error or f"Missing required fields: {', '.join(missing)}"
+                raise Exception(message)
+
+        if self._allowed_connections:
+            if not any(_matches_connection_rule(config, rule) for rule in self._allowed_connections):
+                raise Exception(self._auth_error)
         return MockConnection()
 
     def get_databases(self, conn: Any) -> list[str]:
@@ -104,6 +140,8 @@ class MockDatabaseAdapter(DatabaseAdapter):
     def get_columns(
         self, conn: Any, table: str, database: str | None = None, schema: str | None = None
     ) -> list[ColumnInfo]:
+        if schema:
+            return self._columns.get(f"{schema}.{table}", self._columns.get(table, []))
         return self._columns.get(table, [])
 
     def get_procedures(self, conn: Any, database: str | None = None) -> list[str]:
@@ -112,17 +150,18 @@ class MockDatabaseAdapter(DatabaseAdapter):
     def quote_identifier(self, name: str) -> str:
         return f'"{name}"'
 
-    def build_select_query(
-        self, table: str, limit: int, database: str | None = None, schema: str | None = None
-    ) -> str:
+    def build_select_query(self, table: str, limit: int, database: str | None = None, schema: str | None = None) -> str:
         if schema:
             return f'SELECT * FROM "{schema}"."{table}" LIMIT {limit}'
         return f'SELECT * FROM "{table}" LIMIT {limit}'
 
-    def execute_query(
-        self, conn: Any, query: str, max_rows: int | None = None
-    ) -> tuple[list[str], list[tuple], bool]:
+    def execute_query(self, conn: Any, query: str, max_rows: int | None = None) -> tuple[list[str], list[tuple], bool]:
         """Execute a query and return (columns, rows, truncated)."""
+        import time
+
+        if self._query_delay > 0:
+            time.sleep(self._query_delay)
+
         query_lower = query.lower().strip()
 
         # Check for specific query results (case-insensitive pattern matching)
@@ -146,6 +185,7 @@ class MockDatabaseAdapter(DatabaseAdapter):
 # =============================================================================
 # Default Mock Adapters - used when profiles don't define their own
 # =============================================================================
+
 
 def create_default_sqlite_adapter() -> MockDatabaseAdapter:
     """Create a default SQLite mock adapter with demo data."""
@@ -262,7 +302,7 @@ def create_default_mysql_adapter() -> MockDatabaseAdapter:
 
 
 # Registry of default adapters by database type
-DEFAULT_MOCK_ADAPTERS: dict[str, callable] = {
+DEFAULT_MOCK_ADAPTERS: dict[str, Callable[[], MockDatabaseAdapter]] = {
     "sqlite": create_default_sqlite_adapter,
     "postgresql": create_default_postgresql_adapter,
     "mysql": create_default_mysql_adapter,
@@ -278,9 +318,17 @@ def get_default_mock_adapter(db_type: str) -> MockDatabaseAdapter:
     return MockDatabaseAdapter(name=f"Mock{db_type.title()}")
 
 
+def _matches_connection_rule(config: ConnectionConfig, rule: dict[str, Any]) -> bool:
+    for key, value in rule.items():
+        if getattr(config, key, None) != value:
+            return False
+    return True
+
+
 # =============================================================================
 # Mock Profiles
 # =============================================================================
+
 
 @dataclass
 class MockProfile:
@@ -362,11 +410,53 @@ def _create_multi_db_profile() -> MockProfile:
     )
 
 
+def _create_driver_install_success_profile() -> MockProfile:
+    """Profile intended for demoing the driver install UX."""
+    connections = [
+        ConnectionConfig(
+            name="PostgreSQL (missing driver)",
+            db_type="postgresql",
+            server="localhost",
+            port="5432",
+            database="postgres",
+            username="user",
+        ),
+    ]
+    return MockProfile(
+        name="driver-install-success",
+        connections=connections,
+        adapters={},
+        use_default_adapters=True,
+    )
+
+
+def _create_driver_install_fail_profile() -> MockProfile:
+    """Profile intended for demoing the driver install failure UX."""
+    connections = [
+        ConnectionConfig(
+            name="MySQL (missing driver)",
+            db_type="mysql",
+            server="localhost",
+            port="3306",
+            database="test_sqlit",
+            username="user",
+        ),
+    ]
+    return MockProfile(
+        name="driver-install-fail",
+        connections=connections,
+        adapters={},
+        use_default_adapters=True,
+    )
+
+
 # Registry of available mock profiles
-MOCK_PROFILES: dict[str, callable] = {
+MOCK_PROFILES: dict[str, Callable[[], MockProfile]] = {
     "sqlite-demo": _create_sqlite_demo_profile,
     "empty": _create_empty_profile,
     "multi-db": _create_multi_db_profile,
+    "driver-install-success": _create_driver_install_success_profile,
+    "driver-install-fail": _create_driver_install_fail_profile,
 }
 
 
