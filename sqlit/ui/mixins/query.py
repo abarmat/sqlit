@@ -203,9 +203,19 @@ class QueryMixin:
         self._results_table_counter += 1
         new_id = f"results-table-{self._results_table_counter}"
 
-        if not columns or not rows:
-            # Create empty table
+        if not columns:
+            # No columns at all - create empty table with no header
             new_table = SqlitDataTable(id=new_id, zebra_stripes=True, show_header=False)
+            container.mount(new_table, after=old_table)
+            old_table.remove()
+            return
+
+        if not rows:
+            # Columns but no rows - show headers with empty table
+            arrow_columns = {col: [] for col in columns}
+            arrow_table = pa.table(arrow_columns)
+            backend = ArrowBackend(arrow_table)
+            new_table = SqlitDataTable(id=new_id, zebra_stripes=True, backend=backend)
             container.mount(new_table, after=old_table)
             old_table.remove()
             return
@@ -242,9 +252,19 @@ class QueryMixin:
         self._results_table_counter += 1
         new_id = f"results-table-{self._results_table_counter}"
 
-        if not columns or not rows:
-            # Create empty table
+        if not columns:
+            # No columns at all - create empty table with no header
             new_table = SqlitDataTable(id=new_id, zebra_stripes=True, show_header=False)
+            container.mount(new_table, after=old_table)
+            old_table.remove()
+            return
+
+        if not rows:
+            # Columns but no rows - show headers with empty table
+            arrow_columns = {col: [] for col in columns}
+            arrow_table = pa.table(arrow_columns)
+            backend = ArrowBackend(arrow_table)
+            new_table = SqlitDataTable(id=new_id, zebra_stripes=True, backend=backend)
             container.mount(new_table, after=old_table)
             old_table.remove()
             return
