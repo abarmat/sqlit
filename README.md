@@ -103,7 +103,6 @@ sqlit is for the developer who just wants to query their database with a user fr
 | pipx *(recommended)* | `pipx install sqlit-tui` |
 | uv | `uv tool install sqlit-tui` |
 | pip | `pip install sqlit-tui` |
-| aur | `yay -S python-sqlit-tui` |
 
 ## Usage
 
@@ -236,20 +235,20 @@ See `CONTRIBUTING.md` for development setup, testing, CI, and CockroachDB quicks
 
 Most of the time you can just run `sqlit` and connect. If a Python driver is missing, `sqlit` will show (and often run) the right install command for your environment.
 
-| Database                            | Driver package               | `pipx`                                             | `pip` / venv                                       | aur                                        |
-| :---------------------------------- | :--------------------------- | :------------------------------------------------- | :------------------------------------------------- | :----------------------------------------- |
-| SQLite                              | *(built-in)*                 | *(built-in)*                                       | *(built-in)*                                       | *(built-in)*                               |
-| PostgreSQL / CockroachDB / Supabase | `psycopg2-binary`            | `pipx inject sqlit-tui psycopg2-binary`            | `python -m pip install psycopg2-binary`            | `pacman -S python-psycopg2`                |
-| SQL Server                          | `pyodbc`                     | `pipx inject sqlit-tui pyodbc`                     | `python -m pip install pyodbc`                     | `yay -S python-pyodbc`                     |
-| MySQL                               | `mysql-connector-python`     | `pipx inject sqlit-tui mysql-connector-python`     | `python -m pip install mysql-connector-python`     | `pacman -S python-mysql-connector`         |
-| MariaDB                             | `mariadb`                    | `pipx inject sqlit-tui mariadb`                    | `python -m pip install mariadb`                    | `yay -S python-mariadb-connector`          |
-| Oracle                              | `oracledb`                   | `pipx inject sqlit-tui oracledb`                   | `python -m pip install oracledb`                   | `yay -S python-oracledb`                   |
-| DuckDB                              | `duckdb`                     | `pipx inject sqlit-tui duckdb`                     | `python -m pip install duckdb`                     | `yay -S python-duckdb`                     |
-| ClickHouse                          | `clickhouse-connect`         | `pipx inject sqlit-tui clickhouse-connect`         | `python -m pip install clickhouse-connect`         | `yay -S python-clickhouse-connect`         |
-| Turso                               | `libsql-client`              | `pipx inject sqlit-tui libsql-client`              | `python -m pip install libsql-client`              | (not supported)                            |
-| Cloudflare D1                       | `requests`                   | `pipx inject sqlit-tui requests`                   | `python -m pip install requests`                   | `pacman -S python-requests`                |
-| Snowflake                           | `snowflake-connector-python` | `pipx inject sqlit-tui snowflake-connector-python` | `python -m pip install snowflake-connector-python` | `yay -S python-snowflake-connector-python` |
-| Firebird                            | `firebirdsql`                | `pip install firebirdsql`                          | `python -m pip install firebirdsql`                | (not supported)                            |
+| Database                            | Driver package               | `pipx`                                             | `pip` / venv                                       |
+| :---------------------------------- | :--------------------------- | :------------------------------------------------- | :------------------------------------------------- |
+| SQLite                              | *(built-in)*                 | *(built-in)*                                       | *(built-in)*                                       |
+| PostgreSQL / CockroachDB / Supabase | `psycopg2-binary`            | `pipx inject sqlit-tui psycopg2-binary`            | `python -m pip install psycopg2-binary`            |
+| SQL Server                          | `pyodbc`                     | `pipx inject sqlit-tui pyodbc`                     | `python -m pip install pyodbc`                     |
+| MySQL                               | `mysql-connector-python`     | `pipx inject sqlit-tui mysql-connector-python`     | `python -m pip install mysql-connector-python`     |
+| MariaDB                             | `mariadb`                    | `pipx inject sqlit-tui mariadb`                    | `python -m pip install mariadb`                    |
+| Oracle                              | `oracledb`                   | `pipx inject sqlit-tui oracledb`                   | `python -m pip install oracledb`                   |
+| DuckDB                              | `duckdb`                     | `pipx inject sqlit-tui duckdb`                     | `python -m pip install duckdb`                     |
+| ClickHouse                          | `clickhouse-connect`         | `pipx inject sqlit-tui clickhouse-connect`         | `python -m pip install clickhouse-connect`         |
+| Turso                               | `libsql-client`              | `pipx inject sqlit-tui libsql-client`              | `python -m pip install libsql-client`              |
+| Cloudflare D1                       | `requests`                   | `pipx inject sqlit-tui requests`                   | `python -m pip install requests`                   |
+| Snowflake                           | `snowflake-connector-python` | `pipx inject sqlit-tui snowflake-connector-python` | `python -m pip install snowflake-connector-python` |
+| Firebird                            | `firebirdsql`                | `pipx inject sqlit-tui firebirdsql`                | `python -m pip install firebirdsql`                |
 
 **Note:** SQL Server also requires the platform-specific ODBC driver. On your first connection attempt, `sqlit` can help you install it if it's missing.
 
@@ -257,12 +256,11 @@ Most of the time you can just run `sqlit` and connect. If a Python driver is mis
 
 SSH tunnel functionality requires additional dependencies. Install with the `ssh` extra:
 
-| Method | Command                                      |
-| :----- | :------------------------------------------- |
-| pipx   | `pipx install 'sqlit-tui[ssh]'`              |
-| uv     | `uv tool install 'sqlit-tui[ssh]'`           |
-| pip    | `pip install 'sqlit-tui[ssh]'`               |
-| aur    | `pacman -S python-paramiko python-sshtunnel` |
+| Method | Command                            |
+| :----- | :--------------------------------- |
+| pipx   | `pipx install 'sqlit-tui[ssh]'`    |
+| uv     | `uv tool install 'sqlit-tui[ssh]'` |
+| pip    | `pip install 'sqlit-tui[ssh]'`     |
 
 If you try to create an SSH connection without these dependencies, sqlit will detect this and show you the exact command to install them for your environment.
 
