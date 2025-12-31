@@ -63,7 +63,7 @@ class ConnectionScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel", priority=True),
         Binding("ctrl+s", "save", "Save", priority=True),
         Binding("ctrl+t", "test_connection", "Test", priority=True),
-        Binding("ctrl+i", "install_driver", "Install driver", show=False, priority=True),
+        Binding("ctrl+d", "install_driver", "Install driver", show=False, priority=True),
         Binding("tab", "next_field", "Next field", priority=True),
         Binding("shift+tab", "prev_field", "Previous field", priority=True),
         Binding("down", "focus_tab_content", "Focus content", show=False),
@@ -510,9 +510,9 @@ class ConnectionScreen(ModalScreen):
                 detail_hint = escape(detail) if detail else "Import failed."
                 test_status.update(
                     f"[yellow]⚠ Driver failed to load:[/] {error.package_name}\n"
-                    f"[dim]{detail_hint} Press ^i for details.[/]"
+                    f"[dim]{detail_hint} Press ^d for details.[/]"
                 )
-                dialog.border_subtitle = "[bold]Help ^i[/]  Cancel <esc>"
+                dialog.border_subtitle = "[bold]Help ^d[/]  Cancel <esc>"
                 return
             strategy = detect_strategy(extra_name=error.extra_name, package_name=error.package_name)
             if strategy.can_auto_install:
@@ -521,15 +521,15 @@ class ConnectionScreen(ModalScreen):
                     f"[yellow]⚠ Missing driver:[/] {error.package_name}\n"
                     f"[dim]Install with:[/] {escape(install_cmd)}"
                 )
-                dialog.border_subtitle = "[bold]Install ^i[/]  Cancel <esc>"
+                dialog.border_subtitle = "[bold]Install ^d[/]  Cancel <esc>"
             else:
-                # For unknown install methods, show reason and hint to press ^i for details
+                # For unknown install methods, show reason and hint to press ^d for details
                 reason = strategy.reason_unavailable or "Auto-install not available"
                 test_status.update(
                     f"[yellow]⚠ Missing driver:[/] {error.package_name}\n"
-                    f"[dim]{escape(reason)} Press ^i for install instructions.[/]"
+                    f"[dim]{escape(reason)} Press ^d for install instructions.[/]"
                 )
-                dialog.border_subtitle = "[bold]Help ^i[/]  Cancel <esc>"
+                dialog.border_subtitle = "[bold]Help ^d[/]  Cancel <esc>"
         else:
             if self._post_install_message:
                 test_status.update(f"✓ {self._post_install_message}")
